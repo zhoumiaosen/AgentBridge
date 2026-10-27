@@ -87,7 +87,7 @@ npm run test:browser
 
 The browser runner uses Chromium by default. Set `PLAYWRIGHT_CHROME_PATH` if using an existing Chrome installation. Browser tests cover Home and workspace navigation, host onboarding → discovery → quote → approval → booking → date change → cancellation, preference persistence, conversational date synchronization, and phone navigation, forms, approval, and overflow.
 
-Latest verified checkpoint (October 27, 2026): all 148 unit tests, type checking, and the production build passed. Live phone checks also verified Cedar House's booking, cancellation, date conflicts, nearby availability, and a separate unapproved quote while preserving its existing confirmed booking. See [the QA record](design-qa.md) for scope and evidence. Local captures are kept outside the source release.
+Latest verified checkpoint (October 27, 2026): all 150 unit tests, type checking, and the production build passed. Live phone checks verified Cedar House's booking, cancellation, date conflicts, nearby availability, and a separate unapproved quote while preserving its existing confirmed booking. Fresh-quote regressions cover newly published rooms both in a new chat and after discovery. Each selected business agent receives its current owned room IDs before preparing a quote; server ownership checks and explicit approval remain required. An isolated live Nebius retest produced the new room's correct $298 quote with zero reservations. See [the QA record](design-qa.md) for scope and evidence. Local captures are kept outside the source release.
 
 ## Data and deployment
 
