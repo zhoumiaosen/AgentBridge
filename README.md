@@ -2,9 +2,11 @@
 
 **Where businesses meet personal AI.**
 
+[Open the working demo](https://agentbridge-i7vl.onrender.com). All bookings are test-only, with no real reservations or payments. The free host may take a moment to wake after inactivity; sample data can reset between runs.
+
 AgentBridge connects businesses with people through personal AI. The product vision is a shared network where businesses publish their offers, policies, availability, and supported actions; personal assistants discover relevant businesses, ask questions, and prepare transactions for explicit user approval.
 
-The working local MVP supports finding and talking with business agents and personal skills across categories. It demonstrates transactions through accommodation: a hotel or individual room host publishes an offer without an existing website, the built-in assistant discovers it, and a person approves the test booking. Travel planning supports this example. Appointments, purchases, and connections to external personal assistants are the broader vision, not implemented features.
+The working MVP supports finding and talking with business agents and personal skills across categories. It demonstrates transactions through accommodation: a hotel or individual room host publishes an offer without an existing website, the built-in assistant discovers it, and a person approves the test booking. Travel planning supports this example. Appointments, purchases, and connections to external personal assistants are the broader vision, not implemented features.
 
 The app opens to a simple **Home** screen with **Open Agent Hub** as its main action. Businesses and customers can publish or discover agents and personal skills across categories, without needing a website. Shortcuts open the personal assistant, accommodation listings, and test bookings. **Assistant** leads with finding agents, skills and answers; its date filters are labeled as the accommodation test-booking workflow. Floating desktop navigation and a phone bottom bar connect **Home**, **Listings**, **Assistant**, **Bookings**, and **Agent Hub**. **More** opens **Network vision** and **Preferences**. Each screen has a URL fragment, so browser back/forward and reloading retain the selected view.
 
@@ -116,7 +118,7 @@ For Render, create a Blueprint from the published repository using `render.yaml`
 
 A hosted instance starts with a new database. Local rooms, conversations and reservations are not copied to hosting. The free service has a cold start after inactivity, and its temporary database can reset when it sleeps, restarts or redeploys. Each new browser workspace receives sample inventory and can publish its own business offer for the walkthrough. Choose future stay dates when testing or recording. Use persistent storage only if upgrading intentionally; it is not included in this free demo configuration.
 
-The app is not publicly deployed. Real hotel inventory connections, payments, verified hosts, exact addresses, identity verification, and production abuse prevention are outside this demo. New sessions are available without registration, so the per-session inference limit is only a demo guard; a public launch needs account/global limits and operational retention controls. Keep the demo and inference credits funded throughout judging.
+The public demo runs on Render's free tier with temporary sample data. Real hotel inventory connections, payments, verified hosts, exact addresses, identity verification, and production abuse prevention are outside this demo. New sessions are available without registration, so the per-session inference limit is only a demo guard; a production service would need account/global limits and operational retention controls. Keep the service available and inference credits funded throughout judging.
 
 See [the implementation plan](docs/plans/agentbridge-mvp.md) and [capability interface](docs/capabilities.md).
 
@@ -124,7 +126,7 @@ See [the implementation plan](docs/plans/agentbridge-mvp.md) and [capability int
 
 On October 26, 2026, the 390 × 844 phone flow was verified using real Nebius inference: publish Bridge House Courtyard Room → discover the step-free room for two guests on November 18–20 → read the Bridge House skill profile and room policy → prepare its $328 quote → explicitly approve → see the same confirmation in customer and business views. Only local sample inventory was reserved; no external reservation or payment was made. Live inference uses Nebius credits.
 
-The shared Node server hosts the skill handlers. SQLite stores business offers, reservations, current skills and immutable skill revisions. Listings → Edit agent saves business introductions and guest guidance with conflict protection; View skill opens an exportable JSON manifest. The directory and business invocation API share the same dispatcher as Nebius. Reusable code and operation schemas belong in the repository; business-specific knowledge and revision history live in the database. A separate model or server per business is not required. Public hosting, verified accounts and external-assistant authentication remain future integrations. See the capability interface for the endpoint contract and approval boundaries.
+The shared Node server hosts the skill handlers. SQLite stores business offers, reservations, current skills and immutable skill revisions. Listings → Edit agent saves business introductions and guest guidance with conflict protection; View skill opens an exportable JSON manifest. The directory and business invocation API share the same dispatcher as Nebius. Reusable code and operation schemas belong in the repository; business-specific knowledge and revision history live in the database. A separate model or server per business is not required. Verified accounts and external-assistant authentication remain future integrations. See the capability interface for the endpoint contract and approval boundaries.
 
 ## Publish your own agent or skill
 
