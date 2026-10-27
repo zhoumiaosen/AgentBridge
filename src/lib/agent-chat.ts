@@ -350,23 +350,29 @@ export function createAgentChat(store: Store, tenantId: string) {
         : selectedRefs.length ? undefined : initial.dateChangePending ? initial.reservation : initial.reservations?.length === 1 ? initial.reservations[0] : undefined;
       const requestedDates = message.match(/\b\d{4}-\d{2}-\d{2}\b/g) || [];
       const hasDates = requestedDates.length >= 2;
-      const availabilityOnly = !quoteListingId && allowed && (/\bnew stay\b/i.test(message) || !!previous.messages.at(-1)?.content.includes("guest count to check a new stay")) && !/\bquote\b/i.test(message);
-      const preserveConfirmedQuote = availabilityOnly && !!initial.quote && initial.reservation?.status === "confirmed" && !initial.dateChangePending;
       const dateChangeRequest = !quoteListingId && (dateChangeTopic || (hasDates && !!previousChange && !!previous.messages.at(-1)?.content.includes("new check-in and check-out")));
-      const requireDateChangeQuote = allowed && !!selectedReservation && ((dateChangeRequest && hasDates) || (refreshQuote && !!initial.dateChangePending));
-      const newStayRequest = !quoteListingId && allowed && !dateChangeRequest && !initial.dateChangePending
+      const currentStay = parseDemoRequest(message);
+      const requestedQuote = /\bquote\b/i.test(message) && !/\b(?:do not|don't|never|no)\b[^.!?]*\bquote\b/i.test(message);
+      const availabilityTopic = /\b(?:rooms?|stays?|accommodation|dates?|nights?)\s+(?:(?:is|are|still|currently)\s+)*available\b|\bavailable\s+(?:(?:private|hotel|garden|guest)\s+)*(?:rooms?|stays?)\b|\b(?:room|stay|accommodation)\s+availability\b|\b(?:check|search|find)\b[^.!?]*\bavailability\b/i.test(message);
+      const availabilityOnly = !quoteListingId && allowed && !requestedQuote
+        && (!dateChangeRequest || /\b(?:do not|don't|never)\b[^.!?]*\b(?:change|move|reschedule|extend|shorten|update)\b/i.test(message))
+        && (availabilityTopic || (!/\bquote\b/i.test(message) && /\bnew stay\b/i.test(message)) || !!previous.messages.at(-1)?.content.includes("guest count to check a new stay"));
+      const availabilityStay = agreedStay([...previous.messages, { role: "user", content: message }]);
+      const availabilityFilters = { ...currentStay, checkIn: availabilityStay.checkIn, checkOut: availabilityStay.checkOut, guests: availabilityStay.guests };
+      const requireDateChangeQuote = !availabilityOnly && allowed && !!selectedReservation && ((dateChangeRequest && hasDates) || (refreshQuote && !!initial.dateChangePending));
+      const newStayRequest = !quoteListingId && !availabilityOnly && allowed && !dateChangeRequest && !initial.dateChangePending
         && (initial.reservation?.status === "canceled" || !initial.quote)
         && (/\b(?:fresh|new)\b.{0,80}\bquote\b/i.test(message) || !!previous.messages.at(-1)?.content.includes("guest count for a new stay"));
       const declinedNewQuote = newStayRequest && /\b(?:do not|don't|never)\s+(?:prepare|create|get|make|request|refresh|renew|replace)\b.{0,40}\bquote\b/i.test(message);
       const requestedGuests = message.match(/\b(\d{1,2})\s+(?:guests?|people|adults?|travelers?)\b/i);
-      const requireAvailability = availabilityOnly && requestedDates.length === 2 && !!requestedGuests;
+      const requireAvailability = availabilityOnly && !!availabilityStay.checkIn && !!availabilityStay.checkOut && !!availabilityStay.guests;
       const requireNewStayQuote = newStayRequest && !declinedNewQuote && requestedDates.length === 2 && !!requestedGuests;
       if (newStayRequest && !declinedNewQuote) {
         clearAlternatives(skillId);
         db.prepare("UPDATE agent_chat_booking SET quote_id=NULL,quote_data=NULL WHERE tenant_id=? AND skill_id=?").run(tenantId, skillId);
       }
-      if (!approvalIntent && dateChangeRequest) clearAlternatives(skillId);
-      if (!approvalIntent && (dateChangeRequest || (refreshQuote && initial.dateChangePending)) && initial.quote && (!initial.reservation || initial.dateChangePending))
+      if (!availabilityOnly && !approvalIntent && dateChangeRequest) clearAlternatives(skillId);
+      if (!availabilityOnly && !approvalIntent && (dateChangeRequest || (refreshQuote && initial.dateChangePending)) && initial.quote && (!initial.reservation || initial.dateChangePending))
         db.prepare("UPDATE agent_chat_booking SET quote_id=NULL,quote_data=NULL WHERE tenant_id=? AND skill_id=?").run(tenantId, skillId);
       const cancellationTopic = /\bcancel(?:l?ed|l?ing)?\b(?![\s-]+(?:policy|policies|terms|rules|fees?)\b)/i.test(message)
         || /\b(?:request|prepare|review|confirm|approve)\s+(?:(?:a|the|my|test)\s+)*cancellation\b(?![\s-]+(?:policy|policies|terms|rules|fees?)\b)/i.test(message)
@@ -386,7 +392,7 @@ export function createAgentChat(store: Store, tenantId: string) {
       if (newStayRequest) answer = declinedNewQuote ? "No new quote was prepared. Your bookings are unchanged."
         : requireNewStayQuote ? "" : "Please provide both check-in and check-out dates as YYYY-MM-DD and the guest count for a new stay. No new quote or booking has been made.";
       if (availabilityOnly) answer = requireAvailability ? "" : "Please provide both check-in and check-out dates as YYYY-MM-DD and a guest count to check a new stay. Your bookings are unchanged.";
-      if (dateChangeRequest && !approvalIntent) {
+      if (dateChangeRequest && !availabilityOnly && !approvalIntent) {
         answer = !allowed ? "This profile has no connected room inventory and cannot change a reservation. Select your booking's business agent."
           : !initial.reservations?.length ? "There are no active test bookings with this business to change. Canceled bookings cannot be changed."
           : !selectedReservation ? "Please choose which active booking to change using its confirmation below. No booking has changed."
@@ -461,11 +467,13 @@ export function createAgentChat(store: Store, tenantId: string) {
           for (const { call, args } of parsed) {
             calls++;
             let data: unknown;
-            if (call.function.name === "create_quote" || (call.function.name === "discover_stays" && !preserveConfirmedQuote)) { clearQuote = true; quote = undefined; clearAlternatives(skillId); }
+            if (call.function.name === "create_quote" || (call.function.name === "discover_stays" && !availabilityOnly)) { clearQuote = true; quote = undefined; clearAlternatives(skillId); }
+            if (availabilityOnly && /\b(?:find|search|discover)\b.{0,40}\bnew stay\b/i.test(message)) clearAlternatives(skillId);
             if (call.function.name === "discover_stays") listings = [];
             try {
-              if (availabilityOnly && (call.function.name !== "discover_stays" || args.reservationId || args.checkIn !== requestedDates[0] || args.checkOut !== requestedDates[1] || args.guests !== Number(requestedGuests![1])))
+              if (availabilityOnly && (call.function.name !== "discover_stays" || args.reservationId || args.checkIn !== availabilityStay.checkIn || args.checkOut !== availabilityStay.checkOut || args.guests !== availabilityStay.guests))
                 throw new AgentChatError("The availability check must use the requested dates and guest count without excluding any reservation.");
+              if (availabilityOnly) Object.assign(args, { ...availabilityFilters, amenities: [...new Set([...(args.amenities || []), ...availabilityFilters.amenities])] });
               if (call.function.name === "create_quote" && requireNewStayQuote && (args.reservationId || args.checkIn !== requestedDates[0] || args.checkOut !== requestedDates[1] || args.guests !== Number(requestedGuests![1])))
                 throw new AgentChatError("A new stay must use the requested dates and guest count, without changing an existing reservation.");
               if (call.function.name === "create_quote" && (args.reservationId || requireDateChangeQuote)) {
@@ -476,14 +484,17 @@ export function createAgentChat(store: Store, tenantId: string) {
               data = businesses.invoke(agent.businessId!, call.function.name, args);
               actionError = "";
               if (call.function.name === "discover_stays") {
-                listings = data as BusinessListing[]; clearQuote = !preserveConfirmedQuote; quote = undefined;
+                listings = data as BusinessListing[]; clearQuote = !availabilityOnly; quote = undefined;
                 if (availabilityOnly) {
                   const rooms = businesses.search({}).filter(room => room.businessId === agent.businessId);
                   const named = rooms.filter(room => message.toLowerCase().includes(room.name.toLowerCase()));
                   const room = named.length === 1 ? named[0] : !named.length && rooms.length === 1 ? rooms[0] : undefined;
+                  if (named.length) listings = listings.filter(item => named.some(namedRoom => namedRoom.id === item.id));
                   const nights = (Date.parse(args.checkOut) - Date.parse(args.checkIn)) / 86400000;
                   const unchanged = "Your existing bookings are unchanged. This was a test-only availability check; no quote, booking, change, cancellation or payment was made.";
-                  if (!room) answer = `Which room would you like me to check? ${unchanged}`;
+                  if (!room) answer = listings.length
+                    ? `I found ${listings.length} available room${listings.length === 1 ? "" : "s"} from ${agent.name} for ${args.checkIn} to ${args.checkOut}, ${nights} nights and ${args.guests} guests:\n${listings.map(item => `${item.name}: ${money(item.nightlyCents * nights + item.cleaningCents)} total, including ${money(item.cleaningCents)} cleaning.`).join("\n")}\n${unchanged}`
+                    : `No rooms from ${agent.name} match ${args.checkIn} to ${args.checkOut}, ${args.guests} guests and the requested preferences. ${unchanged}`;
                   else if (listings.some(item => item.id === room.id)) answer = `${room.name} is available for a new stay from ${args.checkIn} to ${args.checkOut}, ${nights} nights and ${args.guests} guests. Current total: ${money(room.nightlyCents * nights + room.cleaningCents)}, including cleaning. ${unchanged}`;
                   else {
                     const nearby: string[] = [];
