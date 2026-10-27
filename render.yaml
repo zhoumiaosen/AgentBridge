@@ -1,0 +1,25 @@
+# Free test demo. Local data can reset when the service sleeps, restarts or redeploys.
+services:
+  - type: web
+    name: agentbridge
+    runtime: docker
+    plan: free
+    region: oregon
+    numInstances: 1
+    autoDeployTrigger: off
+    healthCheckPath: /
+    envVars:
+      - key: HOSTNAME
+        value: 0.0.0.0
+      - key: PORT
+        value: "10000"
+      - key: AGENTBRIDGE_DB_PATH
+        value: /var/data/agentbridge.sqlite
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: NEBIUS_API_KEY
+        sync: false
+      - key: NEBIUS_MODEL
+        value: nvidia/nemotron-3-super-120b-a12b
+      - key: NEBIUS_BASE_URL
+        value: https://api.tokenfactory.us-central1.nebius.com/v1

@@ -1,0 +1,16 @@
+# Only these inputs belong in the image build. Local credentials and data never do.
+**
+!package.json
+!package-lock.json
+!next.config.ts
+!next-env.d.ts
+!tsconfig.json
+!src/
+!src/**
+!public/
+!public/**
+**/.env*
+**/*.sqlite*
+**/*.db*
+**/*.pem
+**/*.key
