@@ -119,7 +119,7 @@ export default function AgentConversation({ initialAgent, onBack, onReservationC
     return () => clearInterval(timer);
   }, [quote?.id, quote?.expiresAt, reservation?.id, changingDates]);
 
-  const sendMessage = async (text: string, clearDraft = true) => {
+  const sendMessage = async (text: string, clearDraft = true, quoteListingId?: string) => {
     if (busy || !text.trim() || conversation?.mode !== "live") return false;
     const controller = new AbortController();
     request.current = controller;
@@ -127,7 +127,7 @@ export default function AgentConversation({ initialAgent, onBack, onReservationC
     try {
       const response = await fetch(path, {
         method: "POST", cache: "no-store", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text.trim() }), signal: controller.signal,
+        body: JSON.stringify({ message: text.trim(), ...(quoteListingId ? { quoteListingId } : {}) }), signal: controller.signal,
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Could not send your message. Please retry.");
@@ -246,7 +246,7 @@ export default function AgentConversation({ initialAgent, onBack, onReservationC
         {conversation.listings.length ? conversation.listings.map(room => <article className="agent-room-card" key={room.id}>
           <h4>{room.name}</h4><p>{room.neighborhood} · Up to {room.maxGuests} guests</p>
           <p>{money(room.nightlyCents)} / night · {money(room.cleaningCents)} cleaning</p>
-          <button className="outline-button" disabled={busy || conversation.mode !== "live"} onClick={() => void sendMessage(`Please prepare a test quote for ${room.name} using the dates and guest count we discussed. Ask me for any missing details.`, false)}>Prepare quote for {room.name}</button>
+          <button className="outline-button" disabled={busy || conversation.mode !== "live"} onClick={() => void sendMessage("Please prepare a test quote for the selected room using the dates and guest count we discussed. Ask me for any missing details.", false, room.id)}>Prepare quote for {room.name}</button>
         </article>) : <p>No rooms matched this search. Try other dates or preferences.</p>}
       </section>}
       {!loading && activeBookings.length > 0 && <section ref={activeBookingsCard} className="agent-room-results" aria-label="Your bookings with this business">

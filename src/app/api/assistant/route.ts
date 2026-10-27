@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { tenant, store, guardRequest } from "@/lib/runtime";
 import { createApproval } from "@/lib/security";
 import { secret } from "@/lib/runtime";
-import { assist } from "@/lib/assistant";
+import { assist, selectDiscoveredAgents } from "@/lib/assistant";
 import { NebiusError } from "@/lib/nebius";
 import { createBusinessSkills } from "@/lib/business-skills";
 import { createSkillLibrary } from "@/lib/skill-library";
@@ -89,9 +89,9 @@ export async function POST(request: Request) {
     s.addConversationTurn(id, body.message, result.reply);
     return NextResponse.json({
       ...result,
-      listings: results,
+      listings: result.listingIds === undefined ? results : results?.filter(entry => result.listingIds!.includes((entry as { id: string }).id)),
       searchCriteria,
-      agents: [...agentMatches.values()],
+      agents: selectDiscoveredAgents([...agentMatches.values()], result.agentIds),
       ...(result.quote
         ? {
             approval: createApproval(

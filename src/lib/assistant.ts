@@ -15,6 +15,8 @@ type Result = {
   mode: "demo" | "live";
   trace: Trace[];
   quote?: unknown;
+  agentIds?: string[];
+  listingIds?: string[];
 };
 type RunTool = (
   name: string,
@@ -181,16 +183,21 @@ function explicitlyNamedBusiness(message: string, listings: unknown[]): string |
 }
 
 function explicitlyNamedSkills(input: Input) {
-  const names = new Map<string, Record<string, unknown>[]>();
+  const names = new Map<string, Map<string, Record<string, unknown>>>();
   for (const skill of (input.skills || []).map(record)) {
-    if (skill.source === "connected" || typeof skill.name !== "string" || typeof skill.id !== "string") continue;
-    const name = skill.name.normalize("NFKC").toLowerCase().replace(/\s+/g, " ").trim();
-    names.set(name, [...(names.get(name) || []), skill]);
+    if (typeof skill.name !== "string" || typeof skill.id !== "string") continue;
+    const aliases = skill.source === "connected" ? [skill.name, skill.ownerName] : [skill.name];
+    for (const alias of aliases) {
+      if (typeof alias !== "string" || !alias.trim()) continue;
+      const name = alias.normalize("NFKC").toLowerCase().replace(/\s+/g, " ").trim();
+      const entries = names.get(name) || new Map();
+      entries.set(skill.id, skill); names.set(name, entries);
+    }
   }
-  return [...names.values()].filter(entries => entries.length === 1).flatMap(([skill]) => {
-    const id = explicitlyNamedBusiness(input.message, [{ name: skill.name, businessId: skill.id }]);
-    return id ? [id] : [];
-  }).slice(0, 8);
+  return [...new Set([...names.entries()].filter(([, entries]) => entries.size === 1).flatMap(([name, entries]) => {
+    const skill = [...entries.values()][0];
+    return explicitlyNamedBusiness(input.message, [{ name, businessId: skill.id }]) ? [String(skill.id)] : [];
+  }))].slice(0, 8);
 }
 type PublishedEvidence = { tool: "business_profile" | "stay_details" | "read_skill"; data: Record<string, unknown> };
 function publishedReply(evidence: PublishedEvidence[], preparedQuote: unknown): string | undefined {
@@ -463,6 +470,12 @@ function validateArgs(name: string, raw: string): Record<string, unknown> {
     throw new Error("Missing quote information.");
   return args;
 }
+export function selectDiscoveredAgents(entries: unknown[], ids?: string[]): Record<string, unknown>[] {
+  const cards = entries.map(record).filter(entry => typeof entry.id === "string");
+  if (ids === undefined) return cards;
+  const byId = new Map(cards.map(card => [card.id, card]));
+  return [...new Set(ids)].flatMap(id => byId.has(id) ? [byId.get(id)!] : []);
+}
 function skillSearchReply(entries: Record<string, unknown>[]) {
   return entries.length ? `Saved in your Agent Hub:\n\n${entries.slice(0, 12).map(item => `${item.name} — ${item.summary}`).join("\n\n")}\n\nSelect a result to start a conversation in Agent Hub.` : "No saved skills match yet. Open Agent Hub to publish your own agent or skill.";
 }
@@ -474,13 +487,35 @@ function conversationalReply(content: string) {
 }
 function staySearchReply(rooms: Record<string, unknown>[], criteria: Record<string, unknown>) {
   const range = criteria.checkIn && criteria.checkOut ? ` for ${criteria.checkIn} to ${criteria.checkOut}` : "";
+  const datesNotice = range ? "" : " Dates have not been checked. Share check-in and check-out dates to verify availability.";
   return rooms.length
-    ? `I found ${rooms.length} matching stay${rooms.length === 1 ? "" : "s"}${range}: ${rooms.slice(0, 5).map(room => `${room.name} (${currency(Number(room.nightlyCents))}/night)`).join("; ")}. Select a room to review a test quote. No booking has been made.`
-    : `No participating stay matches those dates and preferences. Try different dates or preferences. No booking has been made.`;
+    ? `I found ${rooms.length} matching stay${rooms.length === 1 ? "" : "s"}${range}: ${rooms.slice(0, 5).map(room => `${room.name} (${currency(Number(room.nightlyCents))}/night)`).join("; ")}.${datesNotice} Select a room to review a test quote. No booking has been made.`
+    : `No participating stay matches ${range ? "those dates and preferences" : "those preferences"}.${datesNotice} Try different dates or preferences. No booking has been made.`;
 }
 async function demo(input: Input, runTool: RunTool): Promise<Result> {
   const trace: Trace[] = [];
   const ask = input.message;
+  const requested = conversationRequest(input);
+  const roomDiscovery = /\b(?:find|search|discover|looking for|need)\b.*\b(?:rooms?|stays|hotels?|accommodation|place to stay|a stay)\b/i.test(ask);
+  if (input.skills?.length && roomDiscovery) {
+    const result = await runTool("search_stays", { ...requested });
+    const namedBusiness = explicitlyNamedBusiness(ask, input.listings);
+    const rooms = (Array.isArray(result) ? result.map(record) : []).filter(room => !namedBusiness || room.businessId === namedBusiness);
+    const businessIds = new Set(rooms.map(room => room.businessId));
+    trace.push(agentTrace("search_stays", rooms, "Checked published rooms against your requirements"));
+    const cards: Record<string, unknown>[] = [];
+    for (const entry of input.skills.map(record)) {
+      if (entry.source !== "connected" || typeof entry.id !== "string" || !businessIds.has(entry.businessId)) continue;
+      const data = record(await runTool("read_skill", { skillId: entry.id }));
+      if (data.error || data.id !== entry.id) throw new Error("Current saved business agent is unavailable. Please retry.");
+      cards.push(data); trace.push(agentTrace("read_skill", data, "Read saved business agent"));
+      if (cards.length >= 7) break;
+    }
+    return {
+      reply: [ ...(cards.length ? [skillSearchReply(cards)] : []), staySearchReply(rooms, { ...requested }) ].join("\n\n"),
+      mode: "demo", trace, agentIds: cards.map(card => String(card.id)), listingIds: rooms.map(room => String(room.id)),
+    };
+  }
   const namedSkills = explicitlyNamedSkills(input);
   if (namedSkills.length) {
     const saved: PublishedEvidence[] = [];
@@ -632,6 +667,45 @@ export async function assist(input: Input, runTool: RunTool): Promise<Result> {
   const stayRequest = conversationRequest(input);
   const explicitGuests = [...input.history.filter(turn => turn.role === "user"), { content: input.message }].some(turn => explicitRequest(turn.content).guests !== undefined);
   const namedBusiness = explicitlyNamedBusiness(input.message, input.listings);
+  const wantsStayDiscovery = /\b(?:find|search|discover|looking for|need)\b.*\b(?:rooms?|stays|hotels?|accommodation|place to stay|a stay)\b/i.test(input.message);
+  const wantsDiscovery = wantsAgents || wantsStayDiscovery;
+  const explicitTurns = [...input.history.filter(turn => turn.role === "user"), { content: input.message }].map(turn => explicitRequest(turn.content));
+  const constrainStaySearch = (args: Record<string, unknown>) => ({
+    ...args,
+    ...(stayRequest.checkIn && stayRequest.checkOut ? { checkIn: stayRequest.checkIn, checkOut: stayRequest.checkOut } : {}),
+    ...(explicitGuests ? { guests: stayRequest.guests } : {}),
+    ...(explicitTurns.some(turn => turn.maxNightlyCents !== undefined) ? { maxNightlyCents: stayRequest.maxNightlyCents } : {}),
+    ...(stayRequest.amenities.length ? { amenities: [...new Set([...(Array.isArray(args.amenities) ? args.amenities as string[] : []), ...stayRequest.amenities])] } : {}),
+    ...(explicitTurns.some(turn => turn.type !== undefined) ? { type: stayRequest.type } : {}),
+  });
+  const discoverBusinessCards = async () => {
+    if (!wantsDiscovery) return;
+    const businessIds = new Set<string>();
+    if (namedBusiness) businessIds.add(namedBusiness);
+    for (const item of evidence.values()) {
+      const id = item.tool === "business_profile" ? item.data.id : item.data.businessId;
+      if (typeof id === "string" && (!namedBusiness || id === namedBusiness)) businessIds.add(id);
+    }
+    for (const room of foundStays || []) if (typeof room.businessId === "string" && (!namedBusiness || room.businessId === namedBusiness)) businessIds.add(room.businessId);
+    for (const entry of (input.skills || []).map(record)) {
+      if (entry.source !== "connected" || typeof entry.id !== "string" || typeof entry.businessId !== "string" || !businessIds.has(entry.businessId)) continue;
+      const known = evidence.get(`read_skill:${entry.id}`)?.data;
+      if (known) {
+        foundSkills = [...new Map([...(foundSkills || []), known].map(skill => [skill.id, skill])).values()];
+        continue;
+      }
+      if (calls >= 8) break;
+      calls++;
+      const data = record(await runTool("read_skill", { skillId: entry.id }));
+      if (data.error || data.id !== entry.id) throw new Error("Current saved business agent is unavailable. Please retry.");
+      evidence.set(`read_skill:${entry.id}`, { tool: "read_skill", data });
+      foundSkills = [...new Map([...(foundSkills || []), data].map(skill => [skill.id, skill])).values()];
+      trace.push(agentTrace("read_skill", data, "Read saved business agent"));
+      const callId = `discovered-business-agent-${calls}`;
+      messages.push({ role: "assistant", content: null, tool_calls: [{ id: callId, type: "function", function: { name: "read_skill", arguments: JSON.stringify({ skillId: entry.id }) } }] });
+      messages.push({ role: "tool", tool_call_id: callId, content: JSON.stringify(data) });
+    }
+  };
   if (namedBusiness) {
     const args = { businessId: namedBusiness };
     calls++;
@@ -648,7 +722,8 @@ export async function assist(input: Input, runTool: RunTool): Promise<Result> {
     }] });
     messages.push({ role: "tool", tool_call_id: "current-business-profile", content: JSON.stringify(result) });
   }
-  for (const namedSkill of explicitlyNamedSkills(input).slice(0, 8 - calls)) {
+  const namedSkillIds = explicitlyNamedSkills(input);
+  for (const namedSkill of namedSkillIds.slice(0, 8 - calls)) {
     const args = { skillId: namedSkill };
     calls++;
     const data = record(await runTool("read_skill", args));
@@ -660,18 +735,29 @@ export async function assist(input: Input, runTool: RunTool): Promise<Result> {
     messages.push({ role: "tool", tool_call_id: callId, content: JSON.stringify(data) });
   }
   for (let step = 0; step <= 8; step++) {
+    await discoverBusinessCards();
     const hasNamedSkill = [...evidence.values()].some(item => item.tool === "read_skill");
     const singleKnownRoom = !!namedBusiness && input.listings.map(record).filter(item => item.businessId === namedBusiness).length === 1;
     const canChooseRoom = singleKnownRoom || foundStays?.length === 1 || (!!foundStays?.length && /\bcheapest\b/i.test(input.message));
-    const requiredTool = wantsAgents && !foundSkills && !hasNamedSkill ? "search_skills"
+    const requiredTool = wantsStayDiscovery && !foundStays ? "search_stays"
+      : wantsAgents && !foundSkills && !hasNamedSkill ? "search_skills"
       : wantsQuote && canChooseRoom && stayRequest.checkIn && stayRequest.checkOut && explicitGuests ? "create_quote" : undefined;
     const message = await infer({ messages, tools, requiredTool });
     const toolCalls = message.tool_calls;
     if (!Array.isArray(toolCalls) || !toolCalls.length) {
-      const grounded = foundSkills ? skillSearchReply(foundSkills)
-        : foundStays ? staySearchReply(foundStays, stayCriteria)
+      const matchingBusinessIds = new Set((foundStays || []).map(room => room.businessId));
+      const discovered = (foundSkills || []).filter(skill => {
+        if (namedBusiness) return skill.source === "connected" ? skill.businessId === namedBusiness : namedSkillIds.includes(String(skill.id));
+        if (wantsStayDiscovery && foundStays) return skill.source === "connected" && matchingBusinessIds.has(skill.businessId);
+        return true;
+      });
+      const rooms = namedBusiness ? foundStays?.filter(room => room.businessId === namedBusiness) : foundStays;
+      const published = publishedReply([...evidence.values()], quote);
+      const grounded = discovered.length
+        ? [skillSearchReply(discovered), ...(rooms ? [staySearchReply(rooms, stayCriteria)] : [])].join("\n\n")
+        : rooms ? staySearchReply(rooms, stayCriteria)
         : bookings ? bookings.length ? `Your saved test reservations:\n${bookings.map(item => `${item.confirmation}: ${item.listingName}, ${item.checkIn} to ${item.checkOut}, ${item.guests} guests, ${currency(Number(item.totalCents))}, ${item.status}.`).join("\n")}\nOpen Bookings to manage them with approval. No booking or payment was made by this message.` : "You have no saved test reservations. No booking or payment was made by this message."
-        : publishedReply([...evidence.values()], quote);
+        : published || (foundSkills ? skillSearchReply(foundSkills) : undefined);
       const reply = grounded || conversationalReply(message.content!.trim());
       if (!reply)
         throw new Error("The live assistant returned no answer. Please retry.");
@@ -680,6 +766,11 @@ export async function assist(input: Input, runTool: RunTool): Promise<Result> {
         mode: "live",
         trace,
         ...(quote ? { quote } : {}),
+        ...(rooms ? { listingIds: rooms.filter(room => typeof room.id === "string").map(room => String(room.id)) } : {}),
+        ...(wantsDiscovery ? { agentIds: [...new Set([
+          ...discovered.map(skill => String(skill.id)),
+          ...[...evidence.values()].filter(item => item.tool === "read_skill" && item.data.source !== "connected" && namedSkillIds.includes(String(item.data.id))).map(item => String(item.data.id)),
+        ])] } : {}),
       };
     }
     messages.push({
@@ -691,7 +782,10 @@ export async function assist(input: Input, runTool: RunTool): Promise<Result> {
         throw new Error(
           "The assistant reached its action limit. Please simplify your request. No reservation was created.",
         );
-    const validatedCalls = toolCalls.map(call => ({ call, name: call.function.name, args: validateArgs(call.function.name, call.function.arguments) }));
+    const validatedCalls = toolCalls.map(call => {
+      const args = validateArgs(call.function.name, call.function.arguments);
+      return { call, name: call.function.name, args: call.function.name === "search_stays" ? constrainStaySearch(args) : args };
+    });
     for (const { call, name, args } of validatedCalls) {
       if (name === "create_quote" || name === "search_stays") quote = undefined;
       calls++;
@@ -721,7 +815,9 @@ export async function assist(input: Input, runTool: RunTool): Promise<Result> {
                 : "Read your reservations"));
       if (name === "create_quote") {
         quote = result;
-        return { reply: publishedReply([...evidence.values()], quote)!, mode: "live", trace, quote };
+        return { reply: publishedReply([...evidence.values()], quote)!, mode: "live", trace, quote,
+          ...(foundStays ? { listingIds: foundStays.filter(room => typeof room.id === "string" && (!namedBusiness || room.businessId === namedBusiness)).map(room => String(room.id)) } : {}),
+        };
       }
       if (name === "search_stays" && Array.isArray(result)) { foundStays = result.map(record); stayCriteria = args; }
       if (name === "my_bookings" && Array.isArray(result)) bookings = result.map(record);

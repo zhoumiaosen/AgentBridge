@@ -3,6 +3,7 @@ import { createSkillLibrary, type LibrarySkill } from "./skill-library.ts";
 import { createBusinessSkills, type BusinessListing, type BusinessQuote } from "./business-skills.ts";
 import { createApproval, verifyApproval } from "./security.ts";
 import { createNebiusTurn, NebiusError, type NebiusMessage } from "./nebius.ts";
+import { parseDemoRequest } from "./assistant.ts";
 import { reservationRevision, todaySF, type Store, type Message, type Quote, type Reservation } from "./store.ts";
 
 export class AgentChatError extends Error {
@@ -41,8 +42,10 @@ export function validateChatInput(input: unknown): string {
   if (!input || typeof input !== "object" || Array.isArray(input))
     throw new AgentChatError("Please enter a message under 2,000 characters.");
   const value = input as Record<string, unknown>;
-  if (Object.keys(value).some(key => key !== "message"))
+  if (Object.keys(value).some(key => !["message", "quoteListingId"].includes(key)))
     throw new AgentChatError("Only a message can be sent to this conversation.");
+  if (Object.hasOwn(value, "quoteListingId") && (typeof value.quoteListingId !== "string" || !value.quoteListingId.trim() || value.quoteListingId.length > 100))
+    throw new AgentChatError("Choose a published room to prepare a quote.");
   if (typeof value.message !== "string" || !value.message.trim() || value.message.length > 2000)
     throw new AgentChatError("Please enter a message under 2,000 characters.");
   return value.message.trim();
@@ -60,6 +63,40 @@ function dateChangeReply(quote: BusinessQuote, original: Reservation) {
 }
 const dateChangePattern = /\bdate[- ]change\b|\b(?:change|move|reschedule|extend|shorten|update)\b.{0,100}\b(?:dates?|booking|reservation|stay|check-?out)\b/i;
 const confirmations = (message: string) => [...new Set((message.match(/\bAB-[A-Z0-9-]+\b/gi) || []).map(value => value.toUpperCase()))];
+
+function agreedStay(history: Message[]) {
+  let checkIn: string | undefined, checkOut: string | undefined, guests: number | undefined;
+  let dateChange = false, newStay = false;
+  const numbers = ["one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve"];
+  const count = `(?:\\d{1,2}|${numbers.join("|")})`;
+  const guestPattern = new RegExp(`\\b(${count})\\s+(?:guests?|people|adults?|travelers?|children|kids)\\b`, "gi");
+  const alternativeGuests = new RegExp(`\\b${count}\\s+(?:or|and)\\s+${count}\\s+(?:guests?|people|adults?|travelers?)\\b`, "i");
+  for (const { role, content } of history) {
+    if (role !== "user") continue;
+    // Older button messages included an owner-provided room name, not user stay instructions.
+    if (content.startsWith("Please prepare a test quote for ") && content.endsWith(" using the dates and guest count we discussed. Ask me for any missing details.")) continue;
+    const dates = content.match(/\b\d{4}-\d{2}-\d{2}\b/g) || [];
+    const monthDates = content.match(/\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s*\d/gi) || [];
+    const uncertain = /\b(?:maybe|perhaps|possibly|either|unsure|uncertain|not sure|tentative)\b/i.test(content);
+    const mentionsDates = dates.length || monthDates.length || /\b(?:tomorrow|tonight|weekend|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\b|\b(?:next|different|other|new|forget|ignore)\s+(?:week|month|dates?)\b/i.test(content);
+    if (/\bnew stay\b/i.test(content)) { newStay = true; dateChange = false; }
+    if (dateChangePattern.test(content)) { dateChange = true; newStay = false; }
+    if (mentionsDates) {
+      // An incomplete or ambiguous correction invalidates the earlier range.
+      checkIn = checkOut = undefined;
+      if (!uncertain && ((dates.length === 2 && !monthDates.length) || (!dates.length && monthDates.length === 1))) {
+        const parsed = parseDemoRequest(content);
+        checkIn = parsed.checkIn; checkOut = parsed.checkOut;
+      }
+    }
+    const counts = [...content.matchAll(guestPattern)];
+    if (counts.length) guests = counts.length === 1 && !uncertain && !alternativeGuests.test(content)
+      ? /^\d+$/.test(counts[0][1]) ? Number(counts[0][1]) : numbers.indexOf(counts[0][1].toLowerCase()) + 1
+      : undefined;
+    else if (/\b(?:guest count|guests?|people|party size)\b/i.test(content) && (uncertain || /\b(?:different|more|fewer|change|forget|ignore)\b/i.test(content))) guests = undefined;
+  }
+  return { checkIn, checkOut, guests, dateChange, newStay };
+}
 
 export function createAgentChat(store: Store, tenantId: string) {
   const library = createSkillLibrary(store, tenantId);
@@ -255,9 +292,15 @@ export function createAgentChat(store: Store, tenantId: string) {
     }
   }
   async function send(skillId: string, input: unknown): Promise<AgentChatState & { reply: string }> {
-    const message = validateChatInput(input);
+    const requestedMessage = validateChatInput(input);
+    const quoteListingId = (input as { quoteListingId?: string }).quoteListingId;
+    const message = quoteListingId ? "Please prepare a test quote for the selected room using the dates and guest count we discussed. Ask me for any missing details." : requestedMessage;
     const agent = profile(skillId);
     const allowed = canBook(agent);
+    if (quoteListingId) {
+      if (!allowed) throw new AgentChatError("This agent has no connected room inventory.");
+      businesses.details(agent.businessId!, quoteListingId);
+    }
     if (!process.env.NEBIUS_API_KEY?.trim())
       throw new AgentChatError("Live AI is not connected. Your message has not been sent. Please connect Nebius and try again.", 503);
     const token = randomUUID();
@@ -295,11 +338,11 @@ export function createAgentChat(store: Store, tenantId: string) {
         return { type: "function", function: { name, description: operation.description, parameters: operation.inputSchema } };
       }) : undefined;
       const infer = createNebiusTurn();
-      const refreshQuote = allowed && !!initial.quote && (!initial.reservation || initial.dateChangePending)
+      const refreshQuote = !quoteListingId && allowed && !!initial.quote && (!initial.reservation || initial.dateChangePending)
         && /\b(?:refresh|renew|replace)\b.{0,80}\bquote\b/i.test(message)
         && !/\b(?:do not|don't|never)\s+(?:refresh|renew|replace)\b/i.test(message);
       const approvalIntent = /^(?:(?:yes|ok|okay|sure|please)\s+)*(?:yes|ok|okay|sure|go ahead|book it|confirm it|approve it|reserve it|change it|book the room|confirm the booking|approve the quote|confirm the change|approve the change|confirm test date change|confirm|approve|book|reserve)$/.test(message.toLowerCase().replace(/[,.!]/g, "").trim());
-      const dateChangeTopic = dateChangePattern.test(message);
+      const dateChangeTopic = !quoteListingId && dateChangePattern.test(message);
       const previousChange = previous.messages.filter(item => item.role === "user" && dateChangePattern.test(item.content)).at(-1)?.content;
       const requestedRefs = confirmations(message);
       const selectedRefs = requestedRefs.length ? requestedRefs : confirmations(previousChange || "");
@@ -307,11 +350,11 @@ export function createAgentChat(store: Store, tenantId: string) {
         : selectedRefs.length ? undefined : initial.dateChangePending ? initial.reservation : initial.reservations?.length === 1 ? initial.reservations[0] : undefined;
       const requestedDates = message.match(/\b\d{4}-\d{2}-\d{2}\b/g) || [];
       const hasDates = requestedDates.length >= 2;
-      const availabilityOnly = allowed && (/\bnew stay\b/i.test(message) || !!previous.messages.at(-1)?.content.includes("guest count to check a new stay")) && !/\bquote\b/i.test(message);
+      const availabilityOnly = !quoteListingId && allowed && (/\bnew stay\b/i.test(message) || !!previous.messages.at(-1)?.content.includes("guest count to check a new stay")) && !/\bquote\b/i.test(message);
       const preserveConfirmedQuote = availabilityOnly && !!initial.quote && initial.reservation?.status === "confirmed" && !initial.dateChangePending;
-      const dateChangeRequest = dateChangeTopic || (hasDates && !!previousChange && !!previous.messages.at(-1)?.content.includes("new check-in and check-out"));
+      const dateChangeRequest = !quoteListingId && (dateChangeTopic || (hasDates && !!previousChange && !!previous.messages.at(-1)?.content.includes("new check-in and check-out")));
       const requireDateChangeQuote = allowed && !!selectedReservation && ((dateChangeRequest && hasDates) || (refreshQuote && !!initial.dateChangePending));
-      const newStayRequest = allowed && !dateChangeRequest && !initial.dateChangePending
+      const newStayRequest = !quoteListingId && allowed && !dateChangeRequest && !initial.dateChangePending
         && (initial.reservation?.status === "canceled" || !initial.quote)
         && (/\b(?:fresh|new)\b.{0,80}\bquote\b/i.test(message) || !!previous.messages.at(-1)?.content.includes("guest count for a new stay"));
       const declinedNewQuote = newStayRequest && /\b(?:do not|don't|never)\s+(?:prepare|create|get|make|request|refresh|renew|replace)\b.{0,40}\bquote\b/i.test(message);
@@ -368,6 +411,27 @@ export function createAgentChat(store: Store, tenantId: string) {
       let dateAlternatives: BusinessQuote[] | undefined;
       let clearQuote = false;
       let actionError = "";
+      if (quoteListingId) {
+        const stay = agreedStay(previous.messages);
+        cancellationRequested = false;
+        if (initial.dateChangePending || initial.dateAlternatives?.length || (stay.dateChange && initial.reservations?.length)) {
+          answer = "You were reviewing a date change. Use Change dates on the saved booking, or provide dates and a guest count explicitly for a new stay. No new booking quote was prepared.";
+        } else if (initial.reservation?.status === "confirmed" && !stay.newStay) {
+          answer = "Your test booking is already confirmed. For another booking, explicitly request a new stay with its dates and guest count. Your existing booking is unchanged.";
+        } else {
+          clearQuote = true; clearAlternatives(skillId);
+          if (!stay.checkIn || !stay.checkOut || !stay.guests) {
+            answer = "Please provide unambiguous check-in and check-out dates as YYYY-MM-DD and the guest count, then choose Prepare quote again. No quote or booking was made.";
+          } else {
+            try {
+              quote = businesses.quote(agent.businessId!, { listingId: quoteListingId, checkIn: stay.checkIn, checkOut: stay.checkOut, guests: stay.guests });
+              clearQuote = false; answer = quoteReply(quote);
+            } catch (error) {
+              answer = `I could not prepare that quote: ${error instanceof Error ? error.message : "This room is unavailable."} No reservation has been made or changed.`;
+            }
+          }
+        }
+      }
       while (!answer) {
         let model: NebiusMessage;
         try {
