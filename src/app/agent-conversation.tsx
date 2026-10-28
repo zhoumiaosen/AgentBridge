@@ -6,6 +6,7 @@ import { ArrowUpIcon as ArrowUp } from "@phosphor-icons/react/dist/csr/ArrowUp";
 import type { LibrarySkill } from "./skills-library";
 import type { BusinessListing, BusinessQuote } from "@/lib/business-skills";
 import type { Reservation } from "@/lib/store";
+import type { ServiceQuote } from "@/lib/service-quotes";
 
 type Message = { role: "user" | "assistant"; content: string };
 type Conversation = {
@@ -17,6 +18,9 @@ type Conversation = {
   reservations?: Reservation[];
   dateChangePending?: boolean;
   dateAlternatives?: BusinessQuote[];
+  canQuoteService: boolean;
+  serviceQuote?: ServiceQuote;
+  serviceApproval?: string;
 };
 const money = (cents: number) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(cents / 100);
 const dateLabel = (date: string) => new Date(`${date}T12:00:00Z`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
@@ -51,6 +55,9 @@ export default function AgentConversation({ initialAgent, onBack, onReservationC
   const [approvedQuoteId, setApprovedQuoteId] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [quoteError, setQuoteError] = useState("");
+  const [approvedServiceQuoteId, setApprovedServiceQuoteId] = useState<string | null>(null);
+  const [approvingService, setApprovingService] = useState(false);
+  const [serviceQuoteError, setServiceQuoteError] = useState("");
   const [cancellationOpen, setCancellationOpen] = useState(false);
   const [approvedCancellation, setApprovedCancellation] = useState<string | null>(null);
   const [loadingCancellation, setLoadingCancellation] = useState(false);
@@ -65,6 +72,7 @@ export default function AgentConversation({ initialAgent, onBack, onReservationC
   const confirmationKey = useRef<{ quoteId: string; key: string } | null>(null);
   const end = useRef<HTMLDivElement>(null);
   const bookingCard = useRef<HTMLElement>(null);
+  const serviceQuoteCard = useRef<HTMLElement>(null);
   const cancellationCard = useRef<HTMLElement>(null);
   const activeBookingsCard = useRef<HTMLElement>(null);
   const dateChangeForm = useRef<HTMLElement>(null);
@@ -73,6 +81,7 @@ export default function AgentConversation({ initialAgent, onBack, onReservationC
   const agent = conversation?.agent || initialAgent;
   const path = `/api/skills/${encodeURIComponent(initialAgent.id)}/chat`;
   const quote = conversation?.testOnly && conversation.canBook ? conversation.quote : undefined;
+  const serviceQuote = conversation?.testOnly && conversation.serviceQuote?.testOnly && conversation.serviceQuote.skillId === agent.id ? conversation.serviceQuote : undefined;
   const reservation = conversation?.testOnly && conversation.canBook ? conversation.reservation : undefined;
   const stay = reservation || quote;
   const activeBookings = conversation?.testOnly && conversation.canBook ? conversation.reservations || [] : [];
@@ -83,10 +92,13 @@ export default function AgentConversation({ initialAgent, onBack, onReservationC
   const showAlternatives = dateAlternatives.length > 0 && !dateChangeBooking && !cancellationOpen && !showDateChange;
   const cancellation = reservation?.status === "confirmed" && conversation?.cancellation?.reservationId === reservation.id && conversation.cancellation.approval && conversation.cancellation.revision ? conversation.cancellation : undefined;
   const cancellationKey = cancellation ? `${cancellation.reservationId}:${cancellation.revision}` : null;
-  const busy = loading || sending || confirming || loadingCancellation || canceling || !!selectingAlternative;
+  const busy = loading || sending || confirming || approvingService || loadingCancellation || canceling || !!selectingAlternative;
   const secondsLeft = quote ? Math.max(0, Math.ceil((Date.parse(quote.expiresAt) - now) / 1000)) : 0;
   const expired = !Number.isFinite(secondsLeft) || secondsLeft <= 0;
   const canConfirm = !!quote && (!reservation || (showDateChange && reservation.status === "confirmed")) && !!conversation?.approval && !expired && conversation.testOnly === true && conversation.canBook;
+  const serviceSecondsLeft = serviceQuote ? Math.max(0, Math.ceil((Date.parse(serviceQuote.expiresAt) - now) / 1000)) : 0;
+  const serviceExpired = !Number.isFinite(serviceSecondsLeft) || serviceSecondsLeft <= 0;
+  const canApproveService = !!serviceQuote && serviceQuote.status === "pending" && serviceQuote.profileVersion === agent.version && !serviceExpired && !!conversation?.serviceApproval && conversation.canQuoteService === true;
 
   useEffect(() => {
     const controller = new AbortController();
@@ -109,8 +121,9 @@ export default function AgentConversation({ initialAgent, onBack, onReservationC
     else if (showAlternatives && !sending) alternativesCard.current?.scrollIntoView({ block: "start" });
     else if (reservation?.status === "canceled" && activeBookings.length) activeBookingsCard.current?.scrollIntoView({ block: "start" });
     else if ((quote || reservation) && !sending) bookingCard.current?.scrollIntoView({ block: "start" });
+    else if (serviceQuote && !sending) serviceQuoteCard.current?.scrollIntoView({ block: "start" });
     else end.current?.scrollIntoView({ block: "nearest" });
-  }, [conversation?.messages.length, quote?.id, reservation?.id, reservation?.status, sending, cancellationOpen, dateChangeBooking, showDateChange, showAlternatives, activeBookings.length]);
+  }, [conversation?.messages.length, quote?.id, serviceQuote?.id, serviceQuote?.status, reservation?.id, reservation?.status, sending, cancellationOpen, dateChangeBooking, showDateChange, showAlternatives, activeBookings.length]);
   useEffect(() => { setApprovedCancellation(null); }, [cancellationKey]);
   useEffect(() => {
     setApprovedQuoteId(null); setQuoteError(""); setNow(Date.now());
@@ -118,12 +131,19 @@ export default function AgentConversation({ initialAgent, onBack, onReservationC
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
   }, [quote?.id, quote?.expiresAt, reservation?.id, changingDates]);
+  useEffect(() => {
+    setApprovedServiceQuoteId(null); setServiceQuoteError(""); setNow(Date.now());
+    if (!serviceQuote || serviceQuote.status !== "pending") return;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [serviceQuote?.id, serviceQuote?.expiresAt, serviceQuote?.status]);
 
   const sendMessage = async (text: string, clearDraft = true, quoteListingId?: string) => {
     if (busy || !text.trim() || conversation?.mode !== "live") return false;
     const controller = new AbortController();
     request.current = controller;
     setSending(true); setError(""); setApprovedQuoteId(null); setApprovedCancellation(null); setCancellationError(""); setCancellationOpen(false); setAlternativeError("");
+    setApprovedServiceQuoteId(null); setServiceQuoteError("");
     try {
       const response = await fetch(path, {
         method: "POST", cache: "no-store", headers: { "Content-Type": "application/json" },
@@ -134,7 +154,7 @@ export default function AgentConversation({ initialAgent, onBack, onReservationC
       if (controller.signal.aborted) return false;
       setConversation(data); if (clearDraft) setDraft("");
       setCancellationOpen(data.testOnly === true && data.canBook === true && data.cancellationRequested === true && data.reservation?.status === "confirmed" && data.cancellation?.reservationId === data.reservation.id);
-      if (!data.quote && !data.dateAlternatives?.length) input.current?.focus({ preventScroll: true });
+      if (!data.quote && !data.serviceQuote && !data.dateAlternatives?.length) input.current?.focus({ preventScroll: true });
       return true;
     } catch (err) {
       if (!controller.signal.aborted) setError(err instanceof Error ? err.message : "Could not send your message. Please retry.");
@@ -142,6 +162,24 @@ export default function AgentConversation({ initialAgent, onBack, onReservationC
     } finally { if (!controller.signal.aborted) setSending(false); }
   };
   const send = (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); void sendMessage(draft); };
+  const approveService = async () => {
+    if (!serviceQuote || !canApproveService || approvedServiceQuoteId !== serviceQuote.id || busy) return;
+    request.current = null;
+    setApprovingService(true); setServiceQuoteError("");
+    try {
+      const response = await fetch(`${path}/service-confirm`, {
+        method: "POST", cache: "no-store", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ quoteId: serviceQuote.id, approval: conversation!.serviceApproval, approved: true }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Could not approve this test quote. Review it and try again.");
+      if (data.testOnly !== true || data.agent?.id !== agent.id || data.serviceQuote?.testOnly !== true || data.serviceQuote.id !== serviceQuote.id || data.serviceQuote.skillId !== agent.id || data.serviceQuote.status !== "approved" || data.serviceQuote.totalCents !== serviceQuote.totalCents || data.serviceQuote.profileVersion !== serviceQuote.profileVersion || data.serviceQuote.currency !== "USD")
+        throw new Error("The test approval could not be verified. Reopen this conversation to check its saved status before trying again.");
+      setConversation(data);
+    } catch (err) {
+      setServiceQuoteError(err instanceof Error ? err.message : "Could not approve this test quote. Please review it again.");
+    } finally { setApprovingService(false); setApprovedServiceQuoteId(null); }
+  };
   const selectAlternative = async (alternative: BusinessQuote) => {
     if (busy || !showAlternatives || !reservation) return;
     const controller = new AbortController();
@@ -236,11 +274,35 @@ export default function AgentConversation({ initialAgent, onBack, onReservationC
       <h2 id="library-dialog-title">{agent.name}</h2>
       <p>{agent.ownerName} · {agent.category}</p>
       <small>{conversation?.mode === "live" ? "Powered by Nebius · Uses this saved profile" : loading ? "Opening your saved conversation…" : "Live AI unavailable"} · Version {agent.version}</small>
-      {conversation?.canBook && <span className="agent-test-label">Test only · No real bookings or payments</span>}
+      {(conversation?.canBook || conversation?.canQuoteService) && <span className="agent-test-label">Test only · No real bookings or payments</span>}
     </header>
     <div className="agent-chat-messages" role="log" aria-label={`Conversation with ${agent.name}`} aria-live="polite" aria-busy={loading || sending}>
       {loading ? <p className="agent-chat-status" role="status">Loading conversation…</p> : !conversation?.messages.length ? <div className="agent-chat-welcome"><h3>How can I help?</h3><p>{agent.summary || "Ask a question about this agent’s services or preferences."}</p></div> : conversation.messages.map((message, index) => <div key={index} className={`agent-chat-message ${message.role}`}><span>{message.role === "user" ? "You" : agent.name}</span><p>{message.content}</p></div>)}
       {sending && <p className="agent-chat-status" role="status">Thinking about your message…</p>}
+      {!loading && conversation?.canQuoteService && !serviceQuote && <section className="agent-test-quote" aria-label="Service quote available">
+        <h3>Review a test quote</h3>
+        <p className="agent-quote-policy">{agent.serviceOffer?.title || "This business has saved service pricing."} Prepare a quote to see its itemized price before deciding.</p>
+        <button className="outline-button full-button" disabled={busy || conversation.mode !== "live"} onClick={() => void sendMessage("Please prepare a test service quote using your saved service pricing. Ask for my approval, but do not schedule an appointment or take payment.", false)}>Prepare test quote</button>
+      </section>}
+      {!loading && serviceQuote && <section ref={serviceQuoteCard} className="agent-test-quote" aria-label="Test service quote">
+        <span className="agent-test-label">Test only · No real appointments or payments</span>
+        <h3>{serviceQuote.status === "approved" ? "Test quote approved" : "Test service quote"}</h3>
+        <h4>{serviceQuote.title}</h4>
+        <p className="agent-quote-business">Prepared by {agent.name}</p>
+        <dl className="agent-quote-details">
+          {serviceQuote.items.map((item, index) => <div key={index}><dt>{item.label}</dt><dd>{money(item.amountCents)}</dd></div>)}
+          <div className="agent-quote-total"><dt>Total · USD</dt><dd>{money(serviceQuote.totalCents)}</dd></div>
+        </dl>
+        <p className="agent-quote-policy">No extra fees in this test. Approval saves only a test acceptance; no appointment is scheduled, work ordered, or payment taken.</p>
+        {serviceQuote.status === "approved" ? <p className="agent-test-confirmation" role="status">Your approval is saved in this workspace. No real appointment or payment was made.</p> : <>
+          <p className="agent-quote-expiry" aria-live="off">{serviceExpired ? "This quote has expired. Prepare a fresh quote to review." : `Awaiting your approval · Expires in ${Math.floor(serviceSecondsLeft / 60)}:${String(serviceSecondsLeft % 60).padStart(2, "0")}. Saved prices are checked again at approval.`}</p>
+          {!conversation?.serviceApproval && !serviceExpired && <p className="agent-quote-policy">Approval is unavailable. Prepare a fresh quote to review the current prices.</p>}
+          {serviceQuoteError && <div className="modal-error" role="alert">{serviceQuoteError}</div>}
+          <label className="approval-check"><input type="checkbox" checked={approvedServiceQuoteId === serviceQuote.id} onChange={event => setApprovedServiceQuoteId(event.target.checked ? serviceQuote.id : null)} disabled={!canApproveService || busy} /><span>I approve this test service quote</span></label>
+          <button className="primary-button full-button" disabled={!canApproveService || approvedServiceQuoteId !== serviceQuote.id || busy} onClick={approveService}>{approvingService ? "Saving test approval…" : "Approve test quote"}</button>
+          {(serviceExpired || !conversation?.serviceApproval) && conversation?.canQuoteService && <button className="outline-button full-button" disabled={busy || conversation.mode !== "live"} onClick={() => void sendMessage("Please refresh the test service quote using your saved service pricing. Do not approve it, schedule an appointment, or take payment.", false)}>Refresh test quote</button>}
+        </>}
+      </section>}
       {!loading && conversation?.canBook && conversation.listings && <section className="agent-room-results" aria-label="Rooms from this business">
         <h3>Rooms from {agent.name}</h3>
         {conversation.listings.length ? conversation.listings.map(room => <article className="agent-room-card" key={room.id}>
@@ -346,7 +408,7 @@ export default function AgentConversation({ initialAgent, onBack, onReservationC
         <textarea ref={input} id="selected-agent-message" aria-label="Message selected agent" value={draft} onChange={event => setDraft(event.target.value)} placeholder={`Ask ${agent.name}…`} maxLength={2000} rows={2} disabled={busy || conversation?.mode !== "live"} />
         <button className="primary-button" type="submit" aria-label="Send message" disabled={busy || !draft.trim() || conversation?.mode !== "live"}><ArrowUp size={20} /><span className="sr-only">Send message</span></button>
       </form>
-      <p className="agent-chat-note">{conversation?.canBook ? "Search rooms and manage your test booking here. Booking, date changes and cancellation always need your explicit approval." : "Advice based on this profile. No booking, payment, or external action happens in this chat."}</p>
+      <p className="agent-chat-note">{conversation?.canBook ? "Search rooms and manage your test booking here. Booking, date changes and cancellation always need your explicit approval." : conversation?.canQuoteService ? "Review saved service prices and approve a test quote here. No real appointment, payment, or external action happens." : "Advice based on this profile. No booking, payment, or external action happens in this chat."}</p>
     </div>
   </div>;
 }

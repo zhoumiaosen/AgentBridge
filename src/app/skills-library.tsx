@@ -8,6 +8,7 @@ import { XIcon as X } from "@phosphor-icons/react/dist/csr/X";
 import { SparkleIcon as Sparkles } from "@phosphor-icons/react/dist/csr/Sparkle";
 import { UploadSimpleIcon as Upload } from "@phosphor-icons/react/dist/csr/UploadSimple";
 import { ArrowSquareOutIcon as ExternalLink } from "@phosphor-icons/react/dist/csr/ArrowSquareOut";
+import type { ServiceOffer } from "@/lib/skill-library";
 
 export type LibrarySkill = {
   id: string;
@@ -23,8 +24,12 @@ export type LibrarySkill = {
   version: number;
   updatedAt: string;
   businessId?: string;
+  serviceOffer?: ServiceOffer;
 };
-type Draft = Pick<LibrarySkill, "name" | "ownerType" | "ownerName" | "kind" | "category" | "summary" | "agentUrl"> & { content: string };
+type Draft = Pick<LibrarySkill, "name" | "ownerType" | "ownerName" | "kind" | "category" | "summary" | "agentUrl"> & {
+  content: string;
+  serviceOffer?: { title: string; items: { label: string; amount: string }[] };
+};
 const emptyDraft: Draft = { name: "", ownerType: "business", ownerName: "", kind: "skill", category: "General", summary: "", content: "", agentUrl: "" };
 const sourceLabel = { example: "Example", custom: "Your entry", connected: "Connected" };
 async function libraryApi(path = "", method = "GET", body?: unknown) {
@@ -37,11 +42,12 @@ async function libraryApi(path = "", method = "GET", body?: unknown) {
   if (!response.ok) throw new Error(data.error || "Could not load this entry. Please retry.");
   return data;
 }
-function toDraft(skill: Partial<Draft>): Draft {
+function toDraft(skill: Partial<LibrarySkill>): Draft {
   return {
     name: skill.name || "", ownerType: skill.ownerType === "customer" ? "customer" : "business",
     ownerName: skill.ownerName || "", kind: skill.kind === "agent" ? "agent" : "skill",
     category: skill.category || "General", summary: skill.summary || "", content: skill.content || "", agentUrl: skill.agentUrl || "",
+    ...(skill.serviceOffer ? { serviceOffer: { title: skill.serviceOffer.title, items: skill.serviceOffer.items.map(item => ({ label: item.label, amount: (item.amountCents / 100).toFixed(2) })) } } : {}),
   };
 }
 export default function SkillsLibrary({ onManageBusiness, onNotify, businessRevision, openAgentId, onAgentOpened, onReservationChange }: {
@@ -163,8 +169,14 @@ export default function SkillsLibrary({ onManageBusiness, onNotify, businessRevi
     if (busy) return;
     setBusy("save"); setError("");
     try {
+      const { serviceOffer: offer, ...fields } = draft;
+      let serviceOffer: ServiceOffer | undefined;
+      if (offer && draft.ownerType === "business" && draft.kind === "agent") {
+        if (offer.items.some(item => !/^\d+(?:\.\d{1,2})?$/.test(item.amount))) throw new Error("Enter each test price in dollars, with up to two decimal places.");
+        serviceOffer = { title: offer.title, items: offer.items.map(item => ({ label: item.label, amountCents: Math.round(Number(item.amount) * 100) })) };
+      }
       const data = await libraryApi(selected ? `/${encodeURIComponent(selected.id)}` : "", selected ? "PATCH" : "POST", {
-        ...draft, ...(selected ? { version: selected.version } : {}),
+        ...fields, ...(serviceOffer ? { serviceOffer } : {}), ...(selected ? { version: selected.version } : {}),
       });
       const saved: LibrarySkill = data.skill;
       setQuery(""); setOwnerFilter("all"); setHighlight(saved.id); setPanel(null);
@@ -245,6 +257,23 @@ export default function SkillsLibrary({ onManageBusiness, onNotify, businessRevi
           <label className="form-field"><span>Category</span><input aria-label="Category" name="category" value={draft.category} maxLength={60} required placeholder="Travel, support, operations…" onChange={event => change("category", event.target.value)} /></label>
           <label className="form-field"><span>Short description</span><textarea aria-label="Short description" name="summary" value={draft.summary} maxLength={240} rows={3} required onChange={event => change("summary", event.target.value)} /><small className="field-help">What does this agent or skill help with? <span>{draft.summary.length}/240</span></small></label>
           <label className="form-field"><span>{draft.kind === "agent" ? "Profile & instructions" : "Instructions"}</span><textarea aria-label="Instructions" name="content" value={draft.content} maxLength={12000} rows={10} required onChange={event => change("content", event.target.value)} /><small className="field-help">Keep passwords and private details out. <span>{draft.content.length.toLocaleString()}/12,000</span></small></label>
+          {draft.ownerType === "business" && draft.kind === "agent" && <>
+            <label className="approval-check"><input type="checkbox" checked={!!draft.serviceOffer} onChange={event => change("serviceOffer", event.target.checked ? { title: "", items: [{ label: "", amount: "" }] } : undefined)} /><span>Offer a test service quote</span></label>
+            {draft.serviceOffer && <section className="agent-test-quote" aria-label="Test service pricing">
+              <h3>Test service pricing</h3>
+              <p className="agent-quote-policy">These saved prices appear in the customer's quote. Approval records test acceptance only; it never schedules work or takes payment.</p>
+              <label className="form-field"><span>Service title</span><input aria-label="Service title" value={draft.serviceOffer.title} maxLength={120} required onChange={event => change("serviceOffer", { ...draft.serviceOffer!, title: event.target.value })} /></label>
+              {draft.serviceOffer.items.map((item, index) => <div key={index}>
+                <div className="form-grid">
+                  <label className="form-field"><span>Item {index + 1}</span><input aria-label={`Price item ${index + 1}`} value={item.label} maxLength={120} required onChange={event => change("serviceOffer", { ...draft.serviceOffer!, items: draft.serviceOffer!.items.map((row, rowIndex) => rowIndex === index ? { ...row, label: event.target.value } : row) })} /></label>
+                  <label className="form-field"><span>Price · USD</span><input aria-label={`Price amount ${index + 1}`} type="number" inputMode="decimal" min="0" max="10000" step="0.01" required value={item.amount} onChange={event => change("serviceOffer", { ...draft.serviceOffer!, items: draft.serviceOffer!.items.map((row, rowIndex) => rowIndex === index ? { ...row, amount: event.target.value } : row) })} /></label>
+                </div>
+                {draft.serviceOffer!.items.length > 1 && <button className="text-button" type="button" aria-label={`Remove price item ${index + 1}`} onClick={() => change("serviceOffer", { ...draft.serviceOffer!, items: draft.serviceOffer!.items.filter((_, rowIndex) => rowIndex !== index) })}>Remove item {index + 1}</button>}
+              </div>)}
+              <button className="outline-button" type="button" disabled={draft.serviceOffer.items.length >= 8} onClick={() => change("serviceOffer", { ...draft.serviceOffer!, items: [...draft.serviceOffer!.items, { label: "", amount: "" }] })}>Add price item</button>
+              <p className="agent-quote-policy"><strong>Total: {new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(draft.serviceOffer.items.reduce((sum, item) => sum + (Number.isFinite(Number(item.amount)) ? Math.round(Number(item.amount) * 100) : 0), 0) / 100)}</strong> · No extra fees in this test.</p>
+            </section>}
+          </>}
           <label className="form-field"><span>External agent link (optional)</span><input aria-label="External agent link" name="agentUrl" type="url" pattern="https://.*" value={draft.agentUrl || ""} placeholder="https://…" onChange={event => change("agentUrl", event.target.value)} /><small className="field-help">A reference link only. This does not connect or run the agent.</small></label>
           {selected && <p className="library-version">Editing version {selected.version}</p>}
           {error && <div className="modal-error" role="alert">{error}</div>}

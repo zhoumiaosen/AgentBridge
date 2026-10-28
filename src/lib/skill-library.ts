@@ -2,6 +2,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { createBusinessSkills, type BusinessSkill } from "./business-skills.ts";
 import type { createStore } from "./store.ts";
 
+export type ServiceOffer = { title: string; items: Array<{ label: string; amountCents: number }> };
 export type LibrarySkill = {
   id: string;
   name: string;
@@ -16,15 +17,32 @@ export type LibrarySkill = {
   updatedAt: string;
   businessId?: string;
   agentUrl?: string;
+  serviceOffer?: ServiceOffer;
 };
-export type LibraryDraft = Pick<LibrarySkill, "name" | "ownerType" | "ownerName" | "kind" | "category" | "summary" | "content" | "agentUrl">;
+export type LibraryDraft = Pick<LibrarySkill, "name" | "ownerType" | "ownerName" | "kind" | "category" | "summary" | "content" | "agentUrl" | "serviceOffer">;
 type Query = { query?: string; ownerType?: string; kind?: string };
-const portableFields = ["name", "ownerType", "ownerName", "kind", "category", "summary", "content", "agentUrl"];
+const portableFields = ["name", "ownerType", "ownerName", "kind", "category", "summary", "content", "agentUrl", "serviceOffer"];
 const generatedFields = ["id", "source", "version", "updatedAt", "businessId"];
 const limits: Record<string, number> = { name: 100, ownerName: 80, category: 60, summary: 240, content: 12000 };
 function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value) || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) throw new Error("Skill data must be a JSON object.");
   return value as Record<string, unknown>;
+}
+export function validateServiceOffer(input: unknown): ServiceOffer {
+  const value = object(input);
+  if (Object.keys(value).some(key => !["title", "items"].includes(key)) || typeof value.title !== "string" || !value.title.trim() || value.title.length > 120)
+    throw new Error("Use a service title under 121 characters and a list of prices in USD.");
+  if (!Array.isArray(value.items) || value.items.length < 1 || value.items.length > 8)
+    throw new Error("A test service offer needs 1 to 8 price items.");
+  const items = value.items.map(raw => {
+    const item = object(raw);
+    if (Object.keys(item).some(key => !["label", "amountCents"].includes(key)) || typeof item.label !== "string" || !item.label.trim() || item.label.length > 120 || typeof item.amountCents !== "number" || !Number.isSafeInteger(item.amountCents) || item.amountCents < 0 || item.amountCents > 1000000)
+      throw new Error("Each service price needs a label under 121 characters and a nonnegative amount in whole cents.");
+    return { label: item.label.trim(), amountCents: item.amountCents };
+  });
+  const total = items.reduce((sum, item) => sum + item.amountCents, 0);
+  if (total <= 0 || total > 1000000) throw new Error("The test service total must be greater than $0 and at most $10,000 USD.");
+  return { title: value.title.trim(), items };
 }
 function draft(input: unknown, partial = false, allowGenerated = false): Partial<LibraryDraft> {
   const raw = object(input);
@@ -32,10 +50,14 @@ function draft(input: unknown, partial = false, allowGenerated = false): Partial
   const result: Record<string, unknown> = {};
   for (const key of portableFields) {
     if (!Object.hasOwn(raw, key)) {
-      if (!partial && key !== "agentUrl") throw new Error(`${key} is required.`);
+      if (!partial && key !== "agentUrl" && key !== "serviceOffer") throw new Error(`${key} is required.`);
       continue;
     }
     const value = raw[key];
+    if (key === "serviceOffer") {
+      result[key] = validateServiceOffer(value);
+      continue;
+    }
     if (typeof value !== "string") throw new Error(`${key} must be text.`);
     if (key === "ownerType") {
       if (value !== "business" && value !== "customer") throw new Error("Choose business or customer.");
@@ -55,6 +77,8 @@ function draft(input: unknown, partial = false, allowGenerated = false): Partial
     }
     result[key] = key === "content" ? value : value.trim();
   }
+  if (result.serviceOffer && ((result.ownerType !== undefined && result.ownerType !== "business") || (result.kind !== undefined && result.kind !== "agent")))
+    throw new Error("Only a business agent can publish a test service offer.");
   if (partial && !Object.keys(result).length) throw new Error("The file contains no editable skill fields.");
   return result as Partial<LibraryDraft>;
 }

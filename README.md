@@ -54,11 +54,14 @@ Live Nebius search and quote preparation were verified on October 26, 2026 with 
 - One persisted, versioned skill per business, with its own offers, guest knowledge, and quote capability. Edit agents on phones in Listings; the personal assistant reads the saved guidance through a shared, validated skill dispatcher.
 - Authoritative itemized quotes; no hidden taxes or additional fees.
 - Explicit approval cards for booking, cancellation, and date changes.
+- Business agents can also publish itemized test service prices in Agent Hub. A service quote stays pending until the customer checks the approval box and selects **Approve test quote**; acceptance records no appointment, work authorization, or payment.
 - Atomic reservation changes, unique occupied-night constraints, and idempotent confirmation.
 - Bookings and Business listings backed by the same SQLite records.
 - Curated San Francisco itinerary suggestions with official destination links.
 
 ## Walk through the business-to-customer workflow
+
+For a service example, add or edit a business agent in **Agent Hub**, enable **Offer a test service quote**, and save a service title and USD price items. Find the agent from the home conversation, open its chat, and ask it to prepare a test quote. Review its scope and total before approving. Quotes expire after ten minutes; changing the saved business profile requires a fresh quote.
 
 1. Start at **Home → Open Agent Hub** to show the general network of business agents and personal skills. **More → Network vision** explains how each participating business gives personal AI another way to help people. Accommodation is the first supported transaction workflow.
 2. Select **Assistant** and choose future dates.
