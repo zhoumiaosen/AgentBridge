@@ -6,11 +6,11 @@
 
 AgentBridge connects businesses with people through personal AI. The product vision is a shared network where businesses publish their offers, policies, availability, and supported actions; personal assistants discover relevant businesses, ask questions, and prepare transactions for explicit user approval.
 
-The working MVP supports finding and talking with business agents and personal skills across categories. It demonstrates transactions through accommodation: a hotel or individual room host publishes an offer without an existing website, the built-in assistant discovers it, and a person approves the test booking. Travel planning supports this example. Appointments, purchases, and connections to external personal assistants are the broader vision, not implemented features.
+The working MVP supports finding and talking with published business agents and private personal skills across categories. A hotel or individual room host can publish an offer without an existing website; a customer's built-in assistant discovers it and prepares a test booking for approval. Other businesses can offer itemized test service quotes in the same chat. Real appointments, purchases, and connections to external personal assistants remain part of the broader vision.
 
-The app opens to a simple **Home** screen with **Open Agent Hub** as its main action. Businesses and customers can publish or discover agents and personal skills across categories, without needing a website. Shortcuts open the personal assistant, accommodation listings, and test bookings. **Assistant** leads with finding agents, skills and answers; its date filters are labeled as the accommodation test-booking workflow. Floating desktop navigation and a phone bottom bar connect **Home**, **Listings**, **Assistant**, **Bookings**, and **Agent Hub**. **More** opens **Network vision** and **Preferences**. Each screen has a URL fragment, so browser back/forward and reloading retain the selected view.
+The app opens to a simple conversation screen. Ask for a service in ordinary language, then select a matching agent to start its chat. **More** opens **Agent Hub**, business **Listings**, customer **Bookings**, **Network vision**, and **Preferences**. Workspace navigation and full-screen phone dialogs keep those tools accessible. Each screen has a URL fragment, so browser back/forward and reloading retain the selected view.
 
-Manrope typography, Phosphor icons, and spacious layouts give the workspace a consistent visual system. Dialogs fill the screen on phones, with readable form fields and touch-sized controls. A quiet **Sample workspace** label identifies the fictional inventory. Accommodation is the implemented transaction category; other business profiles can be published, discovered and used for conversation.
+Manrope typography, Phosphor icons, and spacious layouts give the workspace a consistent visual system. Dialogs fill the screen on phones, with readable form fields and touch-sized controls. Bookings and service quotes are explicitly test-only.
 
 ## Run locally
 
@@ -37,15 +37,16 @@ Confirm the model identifier and regional endpoint against your Nebius account's
 
 Both assistant surfaces share bounded inference recovery: transient failures and incomplete replies receive up to two retries within a 60-second turn budget. Executed tools and approval actions are never replayed by this retry handler. Saved quotes return immediately with their authoritative terms. Failed personal-assistant turns preserve the draft and do not save a partial conversation. Authentication and quota errors require correcting the server/account configuration. Restart the development server after changing stored service methods so its cached connection loads the new code.
 
-On October 27, three isolated live runs verified new business publication, main-assistant and selected-agent quotes, explicit test approval, matching customer/business reservations, duplicate-confirmation protection, and blocked inventory. A café profile was also discovered and used in live chat. These checks used temporary in-memory data; the existing Bridge House records were unchanged. See `design-qa.md` for verification details. Accommodation remains the only connected transaction category.
+On October 27, three isolated live runs verified new business publication, main-assistant and selected-agent quotes, explicit test approval, matching customer/business reservations, duplicate-confirmation protection, and blocked inventory. A café profile was also discovered and used in live chat. These checks used temporary in-memory data; the existing Bridge House records were unchanged. See `design-qa.md` for verification details. These earlier checks covered the accommodation workflow; test service quote approval was added afterward.
 
 Live Nebius search and quote preparation were verified on October 26, 2026 with Nemotron Super and the endpoint above. The model called `search_stays` and `create_quote`, then opened the approval dialog for two guests on November 10–12: $230 accommodation plus $25 cleaning, $255 total. Approval stayed unchecked, confirmation stayed disabled, and the workspace still had zero bookings. This verifies live inference against the sample inventory; real inventory, external personal assistants, and payments remain unconnected. `.env.local` is ignored by Git and must stay untracked.
 
 ## What works
 
-- Simple Home centered on Agent Hub, with personal-assistant and accommodation workspace shortcuts; a separate network vision in More.
-- Agent Hub with six business/personal examples, connected accommodation agents, search and owner filters.
-- Publish business or personal agent profiles/skills; import Markdown/JSON for review, edit with version protection, and download entries. Newly saved entries appear immediately and survive reload.
+- A simple conversation-first Home and a separate network vision in More.
+- Agent Hub with eight shared fictional business examples: bicycle repair, home cleaning, pet grooming, hair salon, tutoring, café, tech support, and creative design. Existing private examples and connected accommodation agents remain available.
+- Explicitly publish a business agent so other customers can discover it by service and start their own private conversation. Personal agents and skills stay private.
+- Import Markdown/JSON as a private draft for review; owners can edit with version protection and download their own entries. Shared cards show profiles, not uploaded source instructions.
 - Responsive navigation and full-screen dialogs on phones.
 - Host onboarding, structured amenities, pricing, availability range, and cancellation policy.
 - Discover/filter accommodation by dates, guests, budget, room type, and amenities.
@@ -56,22 +57,20 @@ Live Nebius search and quote preparation were verified on October 26, 2026 with 
 - Explicit approval cards for booking, cancellation, and date changes.
 - Business agents can also publish itemized test service prices in Agent Hub. A service quote stays pending until the customer checks the approval box and selects **Approve test quote**; acceptance records no appointment, work authorization, or payment.
 - Atomic reservation changes, unique occupied-night constraints, and idempotent confirmation.
-- Bookings and Business listings backed by the same SQLite records.
+- Customers see their own bookings; businesses see reservations for their owned rooms. All customers share the same availability for a published room.
 - Curated San Francisco itinerary suggestions with official destination links.
 
 ## Walk through the business-to-customer workflow
 
-For a service example, add or edit a business agent in **Agent Hub**, enable **Offer a test service quote**, and save a service title and USD price items. Find the agent from the home conversation, open its chat, and ask it to prepare a test quote. Review its scope and total before approving. Quotes expire after ten minutes; changing the saved business profile requires a fresh quote.
+For a service example, choose one of the eight fictional business agents in **Agent Hub**, or add a business agent with **Offer a test service quote** enabled and saved USD price items. To let another customer's workspace find your agent, check **Let other customers discover this business**. In a separate browser session, ask the home assistant for the service without naming the business, open the matching agent's chat, and request a test quote. Review the scope and total before approving. Quotes expire after ten minutes; changing the saved business profile requires a fresh quote.
 
-1. Start at **Home → Open Agent Hub** to show the general network of business agents and personal skills. **More → Network vision** explains how each participating business gives personal AI another way to help people. Accommodation is the first supported transaction workflow.
-2. Select **Assistant** and choose future dates.
-3. Ask: `Find a step-free room for YYYY-MM-DD to YYYY-MM-DD under $160 per night`.
-4. The seeded properties have no step-free access, so no property matches.
-5. Open **Listings → Add listing**. Publish the example room with **Step-free access** selected and availability covering the requested dates.
-6. Repeat the request in **Assistant**. The new room is immediately discoverable: the business has created a new option for the customer.
-7. View the room's quote, check the approval box, and confirm the stay.
-8. Show the confirmation in **Bookings** and the identical reservation in **Listings**. Both views read the same saved accommodation reservation.
-9. Change dates or cancel with another explicit approval.
+1. In the business workspace, open **More → Listings → Add listing**. Add a fictional room with **Step-free access**, a price, and availability covering future test dates.
+2. Check **Let other customers discover this business and its rooms**, then select **Save room**. Visibility applies to all rooms belonging to that business; it can also be changed in **Edit agent**.
+3. In a separate browser session, ask the home assistant: `Find a step-free room for YYYY-MM-DD to YYYY-MM-DD under $160 per night`.
+4. Select the matching business agent and ask it to prepare a quote using those dates and guest count.
+5. Review the quote, check the approval box, and confirm the test stay.
+6. Show the confirmation in the customer's **Bookings**, then refresh the business workspace's **Listings** to see the same reservation. Other customers cannot book its occupied dates.
+7. Change dates or cancel with another explicit approval; both views update.
 
 All listings and bookings are fictional demonstrations. No card details are collected and no payment is taken. Illustrative room photographs are delivered by Unsplash; typography by Google Fonts, with system fallbacks.
 
@@ -92,17 +91,19 @@ npm run test:browser
 
 The browser runner uses Chromium by default. Set `PLAYWRIGHT_CHROME_PATH` if using an existing Chrome installation. Browser tests cover Home and workspace navigation, host onboarding → discovery → quote → approval → booking → date change → cancellation, preference persistence, conversational date synchronization, and phone navigation, forms, approval, and overflow.
 
-Latest verified checkpoint (October 27, 2026): all 150 unit tests, type checking, and the production build passed. Live phone checks verified Cedar House's booking, cancellation, date conflicts, nearby availability, and a separate unapproved quote while preserving its existing confirmed booking. Fresh-quote regressions cover newly published rooms both in a new chat and after discovery. Each selected business agent receives its current owned room IDs before preparing a quote; server ownership checks and explicit approval remain required. An isolated live Nebius retest produced the new room's correct $298 quote with zero reservations. See [the QA record](design-qa.md) for scope and evidence. Local captures are kept outside the source release.
+Current local checkpoint (October 27, 2026): 220 unit tests and two API checks passed for the shared directory and booking changes. Phone verification across separate workspaces and restart testing are in progress. Remote Turso persistence is not yet verified; account connection is pending.
+
+Earlier verified checkpoint: 150 unit tests, type checking, and the production build passed. Live phone checks verified Cedar House's booking, cancellation, date conflicts, nearby availability, and a separate unapproved quote while preserving its existing confirmed booking. Fresh-quote regressions cover newly published rooms both in a new chat and after discovery. Each selected business agent receives its current owned room IDs before preparing a quote; server ownership checks and explicit approval remain required. An isolated live Nebius retest produced the new room's correct $298 quote with zero reservations. See [the QA record](design-qa.md) for scope and evidence. Local captures are kept outside the source release.
 
 ## Data and deployment
 
-SQLite defaults to `data/agentbridge.sqlite`; override with `AGENTBRIDGE_DB_PATH`. Back up this database (including its SQLite journal/WAL when active) to retain business skills, their history, offers and reservations. Data and credentials are ignored by Git. A signed, HTTP-only browser session selects an isolated demo tenant; all data access is tenant scoped. Each demo tenant owns both host and traveler experiences. This is demonstration identity, not production host authentication.
+SQLite defaults to `data/agentbridge.sqlite`; override with `AGENTBRIDGE_DB_PATH`. Back up this database (including its SQLite journal/WAL when active) to retain business skills, their history, offers and reservations. Data and credentials are ignored by Git. A signed, HTTP-only browser session identifies a workspace. Explicitly published business agents and their offers are discoverable across workspaces; personal skills, chats, preferences, approvals, and customer bookings remain private. Businesses see reservations for their owned rooms. The cookie is prototype identity, not a verified customer or business account.
 
 Set the Nebius key and session secret only in the server's environment or local `.env.local`. Never put them in browser code, a `NEXT_PUBLIC_` variable, a recording, or a repository file. The source release excludes local databases, `.env.local`, generated builds, screenshots, and recordings; `.env.example` contains placeholders only.
 
 Set a stable `SESSION_SECRET` before deployment so returning browsers keep access to their workspace after a process restart. Without one, local development uses a process-lifetime random secret; old browser sessions become inaccessible after restarting even though their SQLite records remain. Clearing cookies also starts a new workspace.
 
-The server needs one Node.js 24 instance with a writable data directory and HTTPS. Mount persistent storage when records must survive restarts; the free demo configuration below uses temporary storage. This version is not suitable for stateless/serverless replicas or Sites Workers: it uses Node's built-in SQLite module and a local disk. Run `npm run build`, then `npm start`; set the hostname/bind address for your deployment environment. Move the transaction store to PostgreSQL before horizontal scaling.
+The server needs one Node.js 24 instance and HTTPS. Set both `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN` for remote persistent storage, or use a writable local SQLite directory for development. The remote mode uses the official synchronous libSQL driver and keeps transactions on the remote database; it does not depend on Render's filesystem. Incomplete cloud settings fail rather than silently using a local database. Run `npm run build`, then `npm start`; set the hostname/bind address for your environment. Move the store to asynchronous database access before scaling traffic. See [free persistent storage](docs/persistence.md) for setup, migration and verification.
 
 ### Docker and Render
 
@@ -117,11 +118,11 @@ docker run --rm -p 3000:3000 \
   agentbridge
 ```
 
-For Render, create a Blueprint from the published repository using `render.yaml`. It defines one free Docker service with no paid disk, so no hosting purchase is required. Supply `NEBIUS_API_KEY` in Render's private environment settings. The Blueprint generates `SESSION_SECRET` and keeps automatic redeployment disabled. Never place the key in `render.yaml` or build arguments. Live model calls still use Nebius credits.
+For Render, create a Blueprint from the published repository using `render.yaml`. It defines one free Docker service with no paid disk. Supply `NEBIUS_API_KEY`, `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN` in Render's private environment settings. A free Turso database provides storage across app restarts and deployments within its free-plan limits; keep paid overages disabled. The Blueprint generates `SESSION_SECRET` for a new service and keeps automatic redeployment disabled. Preserve the existing secret when updating a service. Never place secrets in `render.yaml` or build arguments. Live model calls still use Nebius credits.
 
-A hosted instance starts with a new database. Local rooms, conversations and reservations are not copied to hosting. The free service has a cold start after inactivity, and its temporary database can reset when it sleeps, restarts or redeploys. Each new browser workspace receives sample inventory and can publish its own business offer for the walkthrough. Choose future stay dates when testing or recording. Use persistent storage only if upgrading intentionally; it is not included in this free demo configuration.
+Connecting an empty remote database starts with new records; existing local or hosted records are not copied automatically. Export and import the current hosted database before switching if its test history needs to be retained. Without both Turso settings, the app uses local storage, which resets on free Render when the service sleeps, restarts or redeploys. The free web service still has a cold start after inactivity even with remote storage. Each new browser workspace receives sample inventory. Choose future stay dates when testing or recording.
 
-The public demo runs on Render's free tier with temporary sample data. Real hotel inventory connections, payments, verified hosts, exact addresses, identity verification, and production abuse prevention are outside this demo. New sessions are available without registration, so the per-session inference limit is only a demo guard; a production service would need account/global limits and operational retention controls. Keep the service available and inference credits funded throughout judging.
+The public demo uses test data on Render's free tier. Real hotel inventory connections, payments, verified hosts, exact addresses, identity verification, and production abuse prevention are outside this demo. New sessions are available without registration, so the per-session inference limit is only a demo guard; a production service would need account/global limits and operational retention controls. Keep the service available and inference credits funded throughout judging.
 
 See [the implementation plan](docs/plans/agentbridge-mvp.md) and [capability interface](docs/capabilities.md).
 
@@ -133,13 +134,13 @@ The shared Node server hosts the skill handlers. SQLite stores business offers, 
 
 ## Publish your own agent or skill
 
-Open **Agent Hub → Add agent or skill**. Choose Business or Personal, describe what the entry helps with, add its instructions, and select **Publish entry**. The new card appears immediately. **Import file** can populate the same form from an existing Markdown or JSON file; review it before publishing. **Use as template** copies one of the examples into a new editable draft.
+Open **Agent Hub → Add agent or skill**. Describe the entry and its instructions. Entries start private: select **Save entry**, or choose Business + Agent and check **Let other customers discover this business** before selecting **Publish business agent**. Personal entries remain private. **Import file** reads Markdown or JSON into a private draft for review; an imported file cannot authorize publication. **Use as template** copies an example in your own workspace; shared example cards are read-only.
 
 Agent Hub searches saved SQLite records as you type or change the owner filter. Cards and details show the name, owner, and description; the uploaded source stays in the editor. After publishing, the app retrieves the saved entry from the database again. The main Assistant can also find entries and offer a card that opens the selected conversation.
 
 Choose **Start conversation** to talk with a business agent or use a personal skill. Nebius reads that entry's latest saved profile for each reply. Each entry has its own saved conversation; switching agents keeps their histories separate. A missing or unavailable AI connection produces an error and preserves your draft.
 
-Connected business agents can search their own published rooms and prepare an itemized **Test quote** in that same chat. Supply check-in, check-out and guest count. Review the price, dates and cancellation terms, check **I approve this test booking**, then choose **Confirm test booking**. This creates only a local sample reservation; there are no real bookings or payments. A typed “yes” does not confirm anything. Uploaded profiles and personal skills without a connected room inventory remain conversational.
+Connected business agents can search their own published rooms and prepare an itemized **Test quote** in that same chat. Supply check-in, check-out and guest count. Review the price, dates and cancellation terms, check **I approve this test booking**, then choose **Confirm test booking**. This creates only a test reservation; there are no real bookings or payments. A typed “yes” does not confirm anything. Other business agents with saved service prices can prepare service quotes for separate explicit approval; profiles without a connected inventory or service offer remain conversational.
 
 To cancel that saved test reservation in the same chat, ask the agent to cancel or choose **Review test cancellation**. Review the current stay and policy, check **I approve this test cancellation**, then choose **Confirm test cancellation**. **Keep test booking** closes the review without changing anything. Only eligible reservations can be canceled; chat messages alone cannot approve the action. The canceled status appears in customer Bookings and business Reservations. No real booking, charge or refund occurs.
 
@@ -149,4 +150,4 @@ If those dates are unavailable, the agent suggests up to three nearby stays for 
 
 For a separate new stay, ask the agent to check availability with explicit dates and guest count. Existing confirmed reservations remain part of the availability check. If the requested room is unavailable, the chat can suggest up to three nearby ranges with full prices without creating a quote or changing a booking. Request a fresh quote for your chosen dates, then review and approve it separately. A quote alone does not hold inventory.
 
-An optional external agent link is stored for reference only. Chats do not run uploaded code, authenticate or contact an external agent, or create a real-world transaction. All records remain scoped to the current private workspace.
+An optional external agent link is stored for reference only. Chats do not run uploaded code, authenticate or contact an external agent, or create a real-world transaction. Publishing shares the business profile and offers; each customer's conversation and approvals stay in their own workspace.

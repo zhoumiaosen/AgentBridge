@@ -15,9 +15,11 @@ export async function GET(request: Request) {
       ownerType: query.get("ownerType") || undefined,
       kind: query.get("kind") || undefined,
     });
-    return NextResponse.json({ skills: query.get("metadata") === "1"
-      ? skills.map(({ content: _content, ...entry }) => entry)
-      : skills }, { headers });
+    return NextResponse.json({ skills: skills.map(skill => {
+      if (query.get("metadata") !== "1" && skill.canEdit) return skill;
+      const { content: _content, ...metadata } = skill;
+      return metadata;
+    }) }, { headers });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Could not load skills." }, { status: 400, headers });
   }

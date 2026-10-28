@@ -14,16 +14,16 @@ export default function TermsPage() {
         <h1>Workspace terms</h1>
         <p>AgentBridge is a working prototype for connecting businesses with people through personal AI. These notes explain the current workspace’s scope.</p>
         <section>
-          <h2>Sample listings and reservations</h2>
-          <p>Properties and bookings in this workspace are samples. A confirmation records an action inside the app. It does not reserve a real hotel room, create an agreement with a property, or collect a payment.</p>
+          <h2>Test bookings and service quotes</h2>
+          <p>Businesses, rooms, bookings, and service offers in this app are fictional tests. A booking confirmation or service quote approval records test acceptance inside the app. It does not reserve a real room, schedule an appointment, authorize work, place an order, or collect a payment.</p>
         </section>
         <section>
           <h2>Approval stays with you</h2>
-          <p>Review the dates, guests, price, and cancellation terms before approving a booking or change. The assistant can help find an offer and prepare actions, but the app requires your explicit approval to confirm, change, or cancel a reservation.</p>
+          <p>Review the service scope, itemized price, and any dates or booking terms before approving. The assistant can find offers and prepare quotes. The app requires your explicit approval to accept a test service quote or confirm, change, or cancel a test reservation. A chat message such as “yes” does not approve an action.</p>
         </section>
         <section>
           <h2>What is connected</h2>
-          <p>Accommodation is the current category. External personal assistants, live hotel inventory, verified business accounts, and payments are not connected. An offline label means that a live AI model is not configured.</p>
+          <p>Published business agents can be discovered by other customers. Connected room agents support test bookings, and business agents with saved service prices can prepare test service quotes. Personal skills remain private. External agent links are references only; uploaded instructions are not executed. Live hotel inventory, real appointments, verified business accounts, and payments are not connected.</p>
         </section>
         <section>
           <h2>Use sample information</h2>

@@ -43,7 +43,8 @@ test("conversation home keeps Agent Hub, business tools, and bookings reachable 
   await page.getByRole("button", { name: "Add listing", exact: true }).click();
   const dialog = page.getByRole("dialog");
   await expect(dialog.getByLabel("Listing name", { exact: true })).toBeVisible();
-  await expect(dialog.getByRole("button", { name: "Publish to AgentBridge", exact: true })).toBeVisible();
+  await expect(dialog.getByRole("button", { name: "Save room", exact: true })).toBeVisible();
+  await expect(dialog.getByRole("checkbox", { name: "Let other customers discover this business and its rooms", exact: true })).not.toBeChecked();
   await dialog.getByRole("button", { name: "Close dialog", exact: true }).click();
   await expect(dialog).not.toBeVisible();
   await expect(page.getByRole("button", { name: "Add listing", exact: true })).toBeFocused();

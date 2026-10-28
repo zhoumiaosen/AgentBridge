@@ -18,11 +18,11 @@ function fixture() {
 test("seeds six editable role-specific examples once alongside connected business agents", () => {
   const { store, alice } = fixture();
   const listed = alice.list();
-  assert.equal(listed.filter(x => x.source === "example").length, 6);
-  assert.equal(listed.filter(x => x.source === "example" && x.ownerType === "business").length, 3);
-  assert.equal(listed.filter(x => x.source === "example" && x.ownerType === "customer").length, 3);
+  assert.equal(listed.filter(x => x.source === "example" && x.canEdit).length, 6);
+  assert.equal(listed.filter(x => x.source === "example" && x.canEdit && x.ownerType === "business").length, 3);
+  assert.equal(listed.filter(x => x.source === "example" && x.canEdit && x.ownerType === "customer").length, 3);
   assert.equal(listed.filter(x => x.source === "connected").length, 3);
-  for (const item of listed.filter(x => x.source === "example")) {
+  for (const item of listed.filter(x => x.source === "example" && x.canEdit)) {
     assert.match(item.content, /reference|sample/i);
     assert.equal(item.version, 1);
     assert.deepEqual(alice.history(item.id), [item]);
@@ -77,12 +77,12 @@ test("standalone publication needs no room and updates preserve immutable histor
 
 test("examples remain edited after creating library again", () => {
   const { store, alice } = fixture();
-  const example = alice.list().find(x => x.source === "example")!;
+  const example = alice.list().find(x => x.source === "example" && x.canEdit)!;
   const updated = alice.update(example.id, { ...example, version: example.version, content: "My edited sample instructions." });
   assert.equal(updated.source, "example");
   const reopened = createSkillLibrary(store, "alice");
   assert.equal(reopened.read(example.id).content, updated.content);
-  assert.equal(reopened.list().filter(x => x.source === "example").length, 6);
+  assert.equal(reopened.list().filter(x => x.source === "example" && x.canEdit).length, 6);
   assert.equal(reopened.history(example.id).length, 2);
   store.close();
 });
@@ -90,7 +90,7 @@ test("examples remain edited after creating library again", () => {
 test("library rejects cross-tenant reads, updates and histories including connected businesses", () => {
   const { store, alice, bob } = fixture();
   const item = alice.publish(draft);
-  for (const id of [item.id, alice.list().find(x => x.source === "example")!.id, alice.list().find(x => x.source === "connected")!.id]) {
+  for (const id of [item.id, alice.list().find(x => x.source === "example" && x.canEdit)!.id, alice.list().find(x => x.source === "connected")!.id]) {
     assert.throws(() => bob.read(id), /not found/i);
     assert.throws(() => bob.history(id), /not found/i);
     assert.throws(() => bob.update(id, { ...draft, version: 1 }), /not found/i);
@@ -125,12 +125,12 @@ test("standalone records, edited examples and histories survive restarting an ex
   const dir = mkdtempSync(join(tmpdir(), "agentbridge-library-")); const path = join(dir, "library.sqlite");
   const first = createStore(path); first.ensureTenant("persisted");
   const library = createSkillLibrary(first, "persisted"); const custom = library.publish(draft);
-  const example = library.list().find(x => x.source === "example")!;
+  const example = library.list().find(x => x.source === "example" && x.canEdit)!;
   const saved = library.update(example.id, { ...example, version: 1, content: "Persistent edited sample guidance." });
   first.close();
   const second = createStore(path); second.ensureTenant("persisted"); const reopened = createSkillLibrary(second, "persisted");
   assert.deepEqual(reopened.read(custom.id), custom); assert.deepEqual(reopened.read(example.id), saved);
-  assert.equal(reopened.list().filter(x => x.source === "example").length, 6); assert.equal(reopened.history(example.id).length, 2);
+  assert.equal(reopened.list().filter(x => x.source === "example" && x.canEdit).length, 6); assert.equal(reopened.history(example.id).length, 2);
   second.close(); rmSync(dir, { recursive: true });
 });
 

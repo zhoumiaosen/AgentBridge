@@ -19,7 +19,7 @@ test("service discovery matches bicycle aliases and separated repair terms witho
   const { store, alice } = workspace();
   try {
     for (const query of ["bike repair", "bicycle repairs", "bikes repair service", "cycle repair", "bike-repair", "bike repair businesses"]) {
-      assert.deepEqual(alice.list({ query }).map(item => item.name), ["Cycle shop service desk"], query);
+      assert.deepEqual(alice.list({ query }).map(item => item.name), ["Cycle shop service desk", "Lantern Cycle Desk"], query);
     }
   } finally { store.close(); }
 });
@@ -29,10 +29,10 @@ test("service matching covers coffee shops and arbitrary custom categories", () 
   try {
     const laptop = alice.publish(service);
     const grooming = alice.publish({ ...service, name: "Paw House", ownerName: "Paw House", category: "Pet care", summary: "Bathing, nail trims and grooming for dogs." });
-    assert.deepEqual(alice.list({ query: "coffee shop" }).map(item => item.name), ["Café guest services"]);
-    assert.deepEqual(alice.list({ query: "CAFE SERVICES" }).map(item => item.name), ["Café guest services"]);
+    assert.deepEqual(alice.list({ query: "coffee shop" }).map(item => item.name), ["Café guest services", "Morning Lantern Café"]);
+    assert.deepEqual(alice.list({ query: "CAFE SERVICES" }).map(item => item.name), ["Café guest services", "Morning Lantern Café"]);
     assert.deepEqual(alice.list({ query: "laptop repairs" }).map(item => item.id), [laptop.id]);
-    assert.deepEqual(alice.list({ query: "dog grooming" }).map(item => item.id), [grooming.id]);
+    assert.deepEqual(alice.list({ query: "dog grooming" }).map(item => item.id), [grooming.id, "catalog_pet-grooming"]);
   } finally { store.close(); }
 });
 
@@ -48,8 +48,8 @@ test("meaningful domain constraints and unsupported services are not broadened a
 test("exact names and partial names keep working with normalized accents and punctuation", () => {
   const { store, alice } = workspace();
   try {
-    assert.deepEqual(alice.list({ query: "  CYCLE SHOP SERVICE DESK  " }).map(item => item.name), ["Cycle shop service desk"]);
-    assert.deepEqual(alice.list({ query: "Cycle shop" }).map(item => item.name), ["Cycle shop service desk"]);
+    assert.deepEqual(alice.list({ query: "  CYCLE SHOP SERVICE DESK  " }).map(item => item.name), ["Cycle shop service desk", "Lantern Cycle Desk"]);
+    assert.deepEqual(alice.list({ query: "Cycle shop" }).map(item => item.name), ["Cycle shop service desk", "Lantern Cycle Desk"]);
     assert.deepEqual(alice.list({ query: "JUNI" }).map(item => item.ownerName), ["Juniper Café"]);
     assert.deepEqual(alice.list({ query: "cafe guest-services" }).map(item => item.name), ["Café guest services"]);
     assert.equal(alice.list({ query: "  " }).length, alice.list().length);

@@ -39,7 +39,7 @@ test('a plain bike service request requires database discovery and returns its c
   (result, _calls, library, requests) => {
     assert.equal(requests[0].tool_choice?.function?.name, 'search_skills');
     const cycle = library.list({query: 'bicycle'})[0];
-    assert.deepEqual(result.agentIds, [cycle.id]);
+    assert.deepEqual(result.agentIds, [cycle.id, "catalog_bike-repair"]);
     assert.match(result.reply, /Cycle shop service desk/);
     assert.doesNotMatch(result.reply, /check-in|dates|No matching businesses/);
   },
@@ -47,12 +47,12 @@ test('a plain bike service request requires database discovery and returns its c
 
 test('one concise retry recovers an over-specific service search without using prior hotel or cafe context', () => check(
   'I need someone to fix a flat bicycle tire. Find a bike repair service I can chat with.',
-  [{query: 'bicycle tire repair'}, {query: 'bicycle repair'}],
+  [{query: 'bicycle wheel alignment repair'}, {query: 'bicycle repair'}],
   (result, calls, library, requests) => {
     assert.equal(requests[0].tool_choice?.function?.name, 'search_skills');
     assert.equal(requests[1].tool_choice?.function?.name, 'search_skills');
     assert.equal(calls.length, 2);
-    assert.deepEqual(result.agentIds, [library.list({query: 'bicycle'})[0].id]);
+    assert.deepEqual(new Set(result.agentIds), new Set(library.list({query: 'bicycle repair'}).map(skill => skill.id)));
     assert.doesNotMatch(result.reply, /Café|Harbor|hotel|2026-11/);
   },
   [{role: 'user', content: 'Find a hotel for November 20–22, 2026, for 2 guests under $100.'}, {role: 'user', content: 'Find the Café guest services skill.'}],
@@ -63,7 +63,7 @@ test('a service can be registered as a skill; inferred agent kind must not hide 
   [{query: 'coffee shop', ownerType: 'business', kind: 'agent'}],
   (result, calls, library) => {
     assert.equal(calls[0].kind, undefined);
-    assert.deepEqual(result.agentIds, [library.list({query: 'cafe'})[0].id]);
+    assert.deepEqual(result.agentIds, library.list({query: 'cafe'}).map(skill => skill.id));
     assert.match(result.reply, /Café guest services/);
   },
 ));
@@ -104,7 +104,7 @@ test('an unfiltered model search cannot expose the whole catalog for a specific 
   (result, calls, library) => {
     assert.ok(calls[0].query);
     const cards = selectDiscoveredAgents(library.list(), result.agentIds);
-    assert.deepEqual(cards.map(card => card.name), ['Cycle shop service desk']);
+    assert.deepEqual(cards.map(card => card.name), ['Cycle shop service desk', 'Lantern Cycle Desk']);
   },
 ));
 
@@ -114,7 +114,7 @@ for (const initial of [{query: 'flat tire bicycle repair'}, {}]) {
     [initial, {query: 'bicycle repair'}],
     (result, calls, library) => {
       assert.equal(calls[1].query, 'bicycle repair');
-      assert.deepEqual(result.agentIds, [library.list({query: 'bicycle'})[0].id]);
+      assert.deepEqual(new Set(result.agentIds), new Set(library.list({query: 'bicycle repair'}).map(skill => skill.id)));
     },
   ));
 }

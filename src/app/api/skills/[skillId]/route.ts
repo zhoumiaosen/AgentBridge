@@ -12,15 +12,17 @@ export async function GET(request: Request, { params }: Context) {
     const { skillId } = await params;
     const id = await tenant();
     const library = createSkillLibrary(store(), id);
-    const skill = library.read(skillId);
-    if (new URL(request.url).searchParams.get("download") === "1") {
+    const query = new URL(request.url).searchParams;
+    const skill = query.get("metadata") === "1" && query.get("download") !== "1"
+      ? library.resolve(skillId, { allowExistingBooking: true }).skill : library.read(skillId);
+    if (query.get("download") === "1") {
       return NextResponse.json(library.manifest(skillId), { headers: {
         ...headers,
         "Content-Disposition": `attachment; filename="${skill.id.replace(/[^a-zA-Z0-9_-]/g, "")}.json"`,
       } });
     }
     const { content: _content, ...metadata } = skill;
-    return NextResponse.json({ skill: new URL(request.url).searchParams.get("metadata") === "1" ? metadata : skill }, { headers });
+    return NextResponse.json({ skill: query.get("metadata") === "1" ? metadata : skill }, { headers });
   } catch {
     return NextResponse.json({ error: "Skill not found in this workspace." }, { status: 404, headers });
   }
@@ -34,7 +36,9 @@ export async function PATCH(request: Request, { params }: Context) {
     const input = JSON.parse(raw);
     const { skillId } = await params;
     const id = await tenant();
-    const skill = createSkillLibrary(store(), id).update(skillId, input);
+    const library = createSkillLibrary(store(), id);
+    const visibilityOnly = input && typeof input === "object" && !Array.isArray(input) && Object.hasOwn(input, "visibility") && Object.keys(input).every(key => ["version", "visibility"].includes(key));
+    const skill = visibilityOnly ? library.setVisibility(skillId, input.visibility, input.version) : library.update(skillId, input);
     return NextResponse.json({ skill }, { headers });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Could not save skill." }, { status: 400, headers });

@@ -11,7 +11,9 @@ export async function GET(_request: Request, { params }: Context) {
   try {
     const { businessId } = await params;
     const id = await tenant();
-    return NextResponse.json(createBusinessSkills(store(), id).manifest(businessId), { headers });
+    const skills = createBusinessSkills(store(), id);
+    skills.profile(businessId); // The downloadable manifest includes the owner's private guidance.
+    return NextResponse.json(skills.manifest(businessId), { headers });
   } catch {
     return NextResponse.json({ error: "Business skill not found." }, { status: 404, headers });
   }
@@ -29,8 +31,17 @@ export async function POST(request: Request, { params }: Context) {
     const { businessId } = await params;
     const id = await tenant();
     const skills = createBusinessSkills(store(), id);
-    const business = skills.profile(businessId);
-    const result = skills.invoke(businessId, body.action, body.input);
+    const business = skills.resolve(businessId, { allowExistingBooking: true }).business;
+    let result = skills.invoke(businessId, body.action, body.input);
+    if (!business.canEdit && body.action === "profile") {
+      const { knowledge: _knowledge, ...metadata } = result as typeof business;
+      result = metadata as typeof business;
+    }
+    if (!business.canEdit && body.action === "get_stay_details") {
+      const details = result as ReturnType<typeof skills.details>;
+      const { knowledge: _knowledge, ...metadata } = details.businessSkill;
+      result = { ...details, businessSkill: metadata } as typeof details;
+    }
     return NextResponse.json({
       protocol: "agentbridge.skill.v1",
       businessId: business.id,

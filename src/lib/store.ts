@@ -1,7 +1,5 @@
-import { DatabaseSync } from "node:sqlite";
+import { openDatabase } from "./database.ts";
 import { randomUUID, createHash } from "node:crypto";
-import { mkdirSync } from "node:fs";
-import { dirname } from "node:path";
 
 export type Listing = {
   id: string;
@@ -187,9 +185,8 @@ export function reservationRevision(r: Reservation) {
 }
 
 export function createStore(path: string) {
-  if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
-  const db = new DatabaseSync(path);
-  db.exec(`PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;
+  const db = openDatabase(path);
+  db.exec(`
     CREATE TABLE IF NOT EXISTS tenants(id TEXT PRIMARY KEY,created_at TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS listings(id TEXT PRIMARY KEY,tenant_id TEXT NOT NULL REFERENCES tenants(id),data TEXT NOT NULL);
     CREATE INDEX IF NOT EXISTS listings_tenant ON listings(tenant_id);
@@ -197,6 +194,7 @@ export function createStore(path: string) {
     CREATE TABLE IF NOT EXISTS reservations(id TEXT PRIMARY KEY,tenant_id TEXT NOT NULL REFERENCES tenants(id),data TEXT NOT NULL);
     CREATE INDEX IF NOT EXISTS reservations_tenant ON reservations(tenant_id);
     CREATE TABLE IF NOT EXISTS occupied_nights(tenant_id TEXT NOT NULL,listing_id TEXT NOT NULL,date TEXT NOT NULL,reservation_id TEXT NOT NULL REFERENCES reservations(id),PRIMARY KEY(tenant_id,listing_id,date));
+    CREATE UNIQUE INDEX IF NOT EXISTS occupied_listing_night ON occupied_nights(listing_id,date);
     CREATE TABLE IF NOT EXISTS idempotency(tenant_id TEXT NOT NULL,key TEXT NOT NULL,quote_id TEXT NOT NULL,reservation_id TEXT NOT NULL,PRIMARY KEY(tenant_id,key));
     CREATE TABLE IF NOT EXISTS preferences(tenant_id TEXT PRIMARY KEY REFERENCES tenants(id),data TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS messages(id INTEGER PRIMARY KEY AUTOINCREMENT,tenant_id TEXT NOT NULL REFERENCES tenants(id),role TEXT NOT NULL,content TEXT NOT NULL);
@@ -231,6 +229,20 @@ export function createStore(path: string) {
         .get(tenantId, text(id, "Reservation ID")) as Row | undefined,
     );
   }
+  function inventoryOwner(listingId: string) {
+    const row = db.prepare("SELECT tenant_id FROM listings WHERE id=?").get(listingId);
+    if (!row) throw new Error("Listing not found.");
+    return row.tenant_id as string;
+  }
+  function requirePublished(customerId: string, ownerId: string, listingId: string, original?: Reservation) {
+    if (customerId === ownerId || original?.listingId === listingId) return;
+    const exists = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='agent_publications'").get();
+    const published = exists && db.prepare(`SELECT 1 FROM agent_publications p
+      JOIN business_skills b ON b.tenant_id=p.owner_tenant_id AND b.id=p.skill_id
+      JOIN json_each(b.data, '$.listingIds') rooms ON rooms.value=?
+      WHERE p.owner_tenant_id=? AND p.source='business' LIMIT 1`).get(listingId, ownerId);
+    if (!published) throw new Error("This business is not published for new bookings.");
+  }
   function canUse(
     tenantId: string,
     l: Listing,
@@ -241,9 +253,9 @@ export function createStore(path: string) {
     if (start < l.availableFrom || end > l.availableTo) return false;
     return !db
       .prepare(
-        "SELECT 1 FROM occupied_nights WHERE tenant_id=? AND listing_id=? AND date>=? AND date<? AND reservation_id != ? LIMIT 1",
+        "SELECT 1 FROM occupied_nights WHERE listing_id=? AND date>=? AND date<? AND reservation_id != ? LIMIT 1",
       )
-      .get(tenantId, l.id, start, end, ignore || "");
+      .get(l.id, start, end, ignore || "");
   }
   function changeAllowed(r: Reservation) {
     if (r.status !== "confirmed")
@@ -262,6 +274,7 @@ export function createStore(path: string) {
     },
     ensureTenant(tenantId: string) {
       text(tenantId, "Session", 200);
+      if (db.prepare("SELECT id FROM tenants WHERE id=?").get(tenantId)) return;
       atomic(() => {
         if (db.prepare("SELECT id FROM tenants WHERE id=?").get(tenantId))
           return;
@@ -325,14 +338,9 @@ export function createStore(path: string) {
             image: "/rooms/studio.svg",
           },
         ];
-        for (const seed of seeds) {
-          const data = validateListing(seed);
-          db.prepare("INSERT INTO listings VALUES (?,?,?)").run(
-            data.id,
-            tenantId,
-            JSON.stringify(data),
-          );
-        }
+        const records = seeds.map(validateListing);
+        db.prepare(`INSERT INTO listings VALUES ${records.map(() => "(?,?,?)").join(",")}`)
+          .run(...records.flatMap(data => [data.id, tenantId, JSON.stringify(data)]));
       });
     },
     listListings(tenantId: string, filters: SearchFilters = {}) {
@@ -384,14 +392,14 @@ export function createStore(path: string) {
       );
       return l;
     },
-    createQuote(tenantId: string, input: QuoteInput) {
+    createQuote(tenantId: string, input: QuoteInput, ownerTenantId = tenantId) {
       tenant(tenantId);
       const { start, end, nights } = stay(
         input.checkIn,
         input.checkOut,
         input.guests,
       );
-      const l = listing(tenantId, input.listingId);
+      const l = listing(ownerTenantId, input.listingId);
       if (input.guests > l.maxGuests)
         throw new Error("This room cannot accommodate that many guests.");
       let original: Reservation | undefined;
@@ -401,7 +409,8 @@ export function createStore(path: string) {
         if (original.listingId !== l.id)
           throw new Error("Date changes must use the same property.");
       }
-      if (!canUse(tenantId, l, start, end, original?.id))
+      requirePublished(tenantId, ownerTenantId, l.id, original);
+      if (!canUse(ownerTenantId, l, start, end, original?.id))
         throw new Error("This room is not available for those dates.");
       const q: Quote = {
         id: randomUUID(),
@@ -468,7 +477,8 @@ export function createStore(path: string) {
         const q = parse<Quote>(row);
         if (Date.parse(row.expires_at as string) <= Date.now())
           throw new Error("This quote has expired. Request a new quote.");
-        const l = listing(tenantId, q.listingId);
+        const ownerTenantId = inventoryOwner(q.listingId);
+        const l = listing(ownerTenantId, q.listingId);
         if (listingTerms(l) !== row.listing_terms)
           throw new Error(
             "Property details or prices have changed. Review a new quote.",
@@ -483,7 +493,8 @@ export function createStore(path: string) {
               "The original reservation has changed. Request a new quote.",
             );
         }
-        if (!canUse(tenantId, l, q.checkIn, q.checkOut, original?.id))
+        requirePublished(tenantId, ownerTenantId, l.id, original);
+        if (!canUse(ownerTenantId, l, q.checkIn, q.checkOut, original?.id))
           throw new Error(
             "This room is no longer available. Choose another stay.",
           );
@@ -498,8 +509,8 @@ export function createStore(path: string) {
         };
         if (original) {
           db.prepare(
-            "DELETE FROM occupied_nights WHERE tenant_id=? AND reservation_id=?",
-          ).run(tenantId, r.id);
+            "DELETE FROM occupied_nights WHERE reservation_id=?",
+          ).run(r.id);
           db.prepare(
             "UPDATE reservations SET data=? WHERE tenant_id=? AND id=?",
           ).run(JSON.stringify(r), tenantId, r.id);
@@ -509,13 +520,8 @@ export function createStore(path: string) {
             tenantId,
             JSON.stringify(r),
           );
-        for (let n = 0; n < q.nights; n++)
-          db.prepare("INSERT INTO occupied_nights VALUES (?,?,?,?)").run(
-            tenantId,
-            q.listingId,
-            plusDays(q.checkIn, n),
-            r.id,
-          );
+        const nights = Array.from({ length: q.nights }, (_, n) => [ownerTenantId, q.listingId, plusDays(q.checkIn, n), r.id]);
+        db.prepare(`INSERT INTO occupied_nights VALUES ${nights.map(() => "(?,?,?,?)").join(",")}`).run(...nights.flat());
         db.prepare(
           "UPDATE quotes SET confirmed_reservation_id=? WHERE id=? AND tenant_id=?",
         ).run(r.id, q.id, tenantId);
@@ -538,6 +544,12 @@ export function createStore(path: string) {
           .all(tenantId) as Row[]
       ).map((row) => parse<Reservation>(row));
     },
+    listBusinessReservations(tenantId: string) {
+      tenant(tenantId);
+      return db.prepare(`SELECT r.data FROM reservations r JOIN listings l
+        ON l.id=json_extract(r.data,'$.listingId') WHERE l.tenant_id=? ORDER BY r.rowid DESC`)
+        .all(tenantId).map(row => parse<Reservation>(row));
+    },
     cancelReservation(
       tenantId: string,
       reservationId: string,
@@ -558,8 +570,8 @@ export function createStore(path: string) {
           "UPDATE reservations SET data=? WHERE tenant_id=? AND id=?",
         ).run(JSON.stringify(canceled), tenantId, r.id);
         db.prepare(
-          "DELETE FROM occupied_nights WHERE tenant_id=? AND reservation_id=?",
-        ).run(tenantId, r.id);
+          "DELETE FROM occupied_nights WHERE reservation_id=?",
+        ).run(r.id);
         return canceled;
       });
     },

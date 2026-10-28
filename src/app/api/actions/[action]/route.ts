@@ -16,8 +16,9 @@ export async function GET(_req: Request, { params }: Context) {
     const skills = createBusinessSkills(s, id);
     return NextResponse.json({
       businesses: skills.list(),
-      listings: skills.search({}),
+      listings: s.listListings(id),
       reservations: s.listReservations(id),
+      businessReservations: s.listBusinessReservations(id),
       preferences: s.getPreferences(id),
       messages: s.getMessages(id),
       mode: process.env.NEBIUS_API_KEY ? "live" : "demo",
@@ -52,11 +53,14 @@ export async function POST(request: Request, { params }: Context) {
             version: body.version,
             summary: body.summary,
             knowledge: body.knowledge,
+            ...(body.visibility === undefined ? {} : { visibility: body.visibility }),
           }),
         });
       case "publish": {
         const listing = s.publishListing(id, body);
-        const business = skills.forListing(listing.id);
+        let business = skills.forListing(listing.id);
+        if (body.visibility === "public" && business.visibility !== "public")
+          business = skills.update(business.id, { version: business.version, summary: business.summary, knowledge: business.knowledge, visibility: "public" });
         return NextResponse.json({
           listing: skills.details(business.id, listing.id),
           business,

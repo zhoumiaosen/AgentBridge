@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { validateServiceOffer, type LibrarySkill, type ServiceOffer } from "./skill-library.ts";
+import { createSkillLibrary, validateServiceOffer, type LibrarySkill, type ServiceOffer } from "./skill-library.ts";
 import { verifyApproval } from "./security.ts";
 import type { Store } from "./store.ts";
 
@@ -12,7 +12,7 @@ export class ServiceQuoteError extends Error {
   status: number;
   constructor(message: string, status = 400) { super(message); this.status = status; }
 }
-export function createServiceQuotes(store: Store, tenantId: string) {
+export function createServiceQuotes(store: Store, tenantId: string, library = createSkillLibrary(store, tenantId)) {
   const db = store.db;
   db.exec(`CREATE TABLE IF NOT EXISTS agent_service_quotes (
     tenant_id TEXT NOT NULL REFERENCES tenants(id), skill_id TEXT NOT NULL, data TEXT NOT NULL,
@@ -52,8 +52,8 @@ export function createServiceQuotes(store: Store, tenantId: string) {
       if (quote.status === "approved") { db.exec("COMMIT"); return quote; }
       if (quote.status !== "pending" || !Number.isFinite(Date.parse(quote.expiresAt)) || Date.parse(quote.expiresAt) <= Date.now())
         throw new ServiceQuoteError("This service quote has expired. Request a new quote.", 409);
-      const row = db.prepare("SELECT data FROM skill_library WHERE tenant_id=? AND id=?").get(tenantId, skillId);
-      const agent = row ? JSON.parse(row.data as string) as LibrarySkill : undefined;
+      let agent: LibrarySkill | undefined;
+      try { agent = library.current(skillId).skill; } catch { /* An unpublished business cannot accept a new quote. */ }
       if (!agent || agent.ownerType !== "business" || agent.kind !== "agent" || !agent.serviceOffer || agent.version !== quote.profileVersion || JSON.stringify(validateServiceOffer(agent.serviceOffer)) !== JSON.stringify({ title: quote.title, items: quote.items }))
         throw new ServiceQuoteError("The business profile or service prices changed. Request a new quote.", 409);
       const accepted: ServiceQuote = { ...quote, status: "approved", approvedAt: new Date().toISOString() };

@@ -1,8 +1,7 @@
 import { randomBytes, randomUUID } from "node:crypto";
-import { mkdirSync } from "node:fs";
-import { dirname, resolve } from "node:path";
 import { cookies } from "next/headers";
 import { createStore } from "./store";
+import { databasePath } from "./database";
 import { readSession, signSession, isSameOrigin } from "./security";
 const globals = globalThis as unknown as {
   bridgeStore?: ReturnType<typeof createStore>;
@@ -18,12 +17,7 @@ export function secret() {
 }
 export function store() {
   if (!globals.bridgeStore) {
-    const path = resolve(
-      /* turbopackIgnore: true */ process.env.AGENTBRIDGE_DB_PATH ||
-        "./data/agentbridge.sqlite",
-    );
-    mkdirSync(dirname(path), { recursive: true });
-    globals.bridgeStore = createStore(path);
+    globals.bridgeStore = createStore(databasePath());
   }
   return globals.bridgeStore;
 }

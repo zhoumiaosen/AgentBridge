@@ -19,7 +19,7 @@ async function publish(request: APIRequestContext, baseURL: string | undefined, 
 
 test("Agent Hub search reads new database entries and returns cards without uploaded instructions", async ({ page, baseURL }) => {
   await page.goto("/#skills");
-  await expect(page.locator(".library-card")).toHaveCount(9);
+  await expect(page.locator(".library-card").first()).toBeVisible();
   // Publish outside the mounted UI so a local filter cannot discover this entry.
   const agent = await publish(page.request, baseURL, "Orchid database concierge");
   const searchResponse = page.waitForResponse(response => {
@@ -72,7 +72,7 @@ test("chat API reads the selected saved profile and rejects foreign sessions and
 test("phone conversations use the selected agent and preserve drafts on failure without mixing histories", async ({ page, baseURL }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/#skills");
-  await expect(page.locator(".library-card")).toHaveCount(9);
+  await expect(page.locator(".library-card").first()).toBeVisible();
   const business = await publish(page.request, baseURL, "Orchid conversation concierge");
   const personal = await publish(page.request, baseURL, "Orchid conversation planner", true);
   const messages = new Map<string, Array<{ role: "user" | "assistant"; content: string }>>([[business.id, []], [personal.id, []]]);

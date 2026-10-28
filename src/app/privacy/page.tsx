@@ -12,10 +12,15 @@ export default function PrivacyPage() {
       <Link className="utility-brand" href="/">AgentBridge</Link>
       <main className="utility-content" id="main-content">
         <h1>Privacy notice</h1>
-        <p>This notice describes the current local AgentBridge workspace. Use sample information when exploring it.</p>
+        <p>This notice describes the AgentBridge test app. Use fictional business and customer information when exploring it.</p>
         <section>
           <h2>What the workspace saves</h2>
-          <p>Listings, quotes, bookings, saved preferences, and assistant conversations are stored in the app’s local database. Business and customer views share these records within your workspace.</p>
+          <p>The server saves agent profiles and instructions, listings, quotes, test bookings, preferences, and conversations. It uses a local SQLite database or a Turso database when the operator configures it. Storage on a free host’s local filesystem can reset after a restart or deployment.</p>
+        </section>
+        <section>
+          <h2>Published businesses and private conversations</h2>
+          <p>Business agents start private. If you choose to let other customers discover a business, its profile, offers, and room availability become discoverable across workspaces. Personal entries, conversations, preferences, and customer approvals stay private to their workspace. A room’s business owner can see the test reservation details, including dates, guests, price, and status.</p>
+          <p>Only the owner can edit or download an agent’s instructions. The AI uses those instructions as reference material when answering customers; they are not a place to store secrets.</p>
         </section>
         <section>
           <h2>Your browser session</h2>
@@ -23,7 +28,7 @@ export default function PrivacyPage() {
         </section>
         <section>
           <h2>Assistant requests</h2>
-          <p>In offline mode, the app processes requests locally using scripted logic. If a live model is configured, messages, recent conversation context, saved preferences, and relevant listing information may be sent to the configured model provider to answer your request.</p>
+          <p>The offline personal assistant uses scripted logic on the server. When Nebius AI is configured, messages, recent conversation context, relevant preferences, offers, and the selected agent’s instructions may be sent to Nebius to answer your request. Private workspace content is not a secret vault; do not include passwords, access codes, or sensitive personal details.</p>
         </section>
         <section>
           <h2>External resources</h2>
@@ -31,7 +36,7 @@ export default function PrivacyPage() {
         </section>
         <section>
           <h2>Data controls</h2>
-          <p>You can change or reset saved preferences in the app. This version does not provide account deletion or a complete data deletion control. Records remain in the local database until the person running the app removes them.</p>
+          <p>You can edit your agents, make a published business private again, and change or reset saved preferences. Making a business private stops new discovery; it does not erase saved records. This version has no complete account or data deletion control. Stored records are managed by the person running the app.</p>
         </section>
         <Link className="utility-back" href="/">Return to your workspace</Link>
         <Link href="/terms">Workspace terms</Link>

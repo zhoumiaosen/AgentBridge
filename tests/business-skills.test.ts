@@ -275,6 +275,8 @@ test("saved skill data and immutable revision history survive store restart", as
 test("legacy seeded business aliases preserve identity, saved guidance and immutable history", async () => {
   const { createHash } = await import("node:crypto");
   const { store, alice } = fixture();
+  store.db.prepare("DELETE FROM business_skill_history WHERE tenant_id=?").run("alice");
+  store.db.prepare("DELETE FROM business_skills WHERE tenant_id=?").run("alice");
   const aliases = ["Pacific House", "Maya", "Alex"];
   const seeded = store.listListings("alice");
   const legacySkills = seeded.map((room, index) => {
@@ -300,8 +302,9 @@ test("legacy seeded business aliases preserve identity, saved guidance and immut
     assert.equal(current.version, 2);
     assert.equal(current.summary, legacy.summary);
     assert.equal(current.knowledge, legacy.knowledge);
-    assert.deepEqual(alice.history(id)[0], legacy);
-    assert.deepEqual(alice.history(id), [legacy, current]);
+    const legacyMetadata = { ...legacy, visibility: "private", canEdit: true };
+    assert.deepEqual(alice.history(id)[0], legacyMetadata);
+    assert.deepEqual(alice.history(id), [legacyMetadata, current]);
     assert.equal(alice.profile(id).version, 2);
     assert.equal(alice.details(id, room.id).hostName, room.hostName);
   }

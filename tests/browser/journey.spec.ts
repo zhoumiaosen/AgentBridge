@@ -16,7 +16,7 @@ test("onboard host, discover, explicitly approve booking, reschedule, cancel, pe
     .getByRole("button", { name: "Step-free access", exact: true })
     .click();
   await page
-    .getByRole("button", { name: "Publish to AgentBridge", exact: true })
+    .getByRole("button", { name: "Save room", exact: true })
     .click();
   await expect(page.getByRole("dialog")).not.toBeVisible();
   await page.getByText("Room search details", { exact: true }).click();

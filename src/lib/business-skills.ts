@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { createStore, Listing, Quote, QuoteInput, SearchFilters } from "./store.ts";
+import { createAgentPublications, validateVisibility, type AgentVisibility } from "./agent-publications.ts";
 
 export type BusinessSkill = {
   id: string;
@@ -13,13 +14,15 @@ export type BusinessSkill = {
   knowledge: string;
   updatedAt: string;
   schemaVersion: "1.0";
+  visibility?: AgentVisibility;
+  canEdit?: boolean;
 };
 export type BusinessListing = Listing & { businessId: string; businessName: string };
 export type BusinessDetails = BusinessListing & {
   businessSkill: Pick<BusinessSkill, "version" | "summary" | "knowledge">;
 };
 export type BusinessQuote = Quote & { businessId: string; businessName: string; skillVersion: number };
-export type SkillUpdate = { version: number; summary: string; knowledge: string };
+export type SkillUpdate = { version: number; summary: string; knowledge: string; visibility?: AgentVisibility };
 type Row = { data: string; version: number };
 type PropertySchema = { type: string; minLength?: number; maxLength?: number; minimum?: number; maximum?: number; maxItems?: number; enum?: readonly string[]; pattern?: string; items?: PropertySchema };
 type InputSchema = { type: "object"; properties: Record<string, PropertySchema>; required: readonly string[]; additionalProperties: false };
@@ -90,6 +93,7 @@ function displayBusinessName(listing: Listing): string {
 
 export function createBusinessSkills(store: ReturnType<typeof createStore>, tenantId: string) {
   const db = store.db;
+  const publications = createAgentPublications(db);
   db.exec(`
     CREATE TABLE IF NOT EXISTS business_skills (
       tenant_id TEXT NOT NULL REFERENCES tenants(id),
@@ -118,16 +122,32 @@ export function createBusinessSkills(store: ReturnType<typeof createStore>, tena
   }
   function current(id: string): BusinessSkill | undefined {
     const row = db.prepare("SELECT data,version FROM business_skills WHERE tenant_id=? AND id=?").get(tenantId, id) as Row | undefined;
-    return row ? JSON.parse(row.data) as BusinessSkill : undefined;
+    return row ? decorate(JSON.parse(row.data) as BusinessSkill, tenantId) : undefined;
+  }
+  function decorate(skill: BusinessSkill, ownerTenantId: string): BusinessSkill {
+    return { ...skill, visibility: publications.get(skill.id)?.owner_tenant_id === ownerTenantId ? "public" : "private", canEdit: ownerTenantId === tenantId };
+  }
+  function resolve(id: string, options: { allowExistingBooking?: boolean } = {}): { business: BusinessSkill; ownerTenantId: string } {
+    if (typeof id !== "string" || !id || id.length > 200) throw new Error("Business not found.");
+    const owned = current(id);
+    if (owned) return { business: owned, ownerTenantId: tenantId };
+    const published = publications.get(id);
+    const row = db.prepare("SELECT tenant_id,data FROM business_skills WHERE id=?").get(id);
+    if (!row) throw new Error("Business not found.");
+    const saved = JSON.parse(row.data as string) as BusinessSkill;
+    const existing = options.allowExistingBooking && store.listReservations(tenantId).some(reservation => saved.listingIds.includes(reservation.listingId));
+    if ((!published || published.source !== "business" || published.owner_tenant_id !== row.tenant_id) && !existing) throw new Error("Business not found.");
+    return { business: decorate(saved, row.tenant_id as string), ownerTenantId: row.tenant_id as string };
   }
   function save(skill: BusinessSkill) {
-    const data = JSON.stringify(skill);
+    const { canEdit: _canEdit, ...saved } = skill;
+    const data = JSON.stringify(saved);
     db.prepare("INSERT INTO business_skills (tenant_id,id,version,data) VALUES (?,?,?,?) ON CONFLICT(tenant_id,id) DO UPDATE SET version=excluded.version,data=excluded.data").run(tenantId, skill.id, skill.version, data);
     db.prepare("INSERT INTO business_skill_history (tenant_id,id,version,data) VALUES (?,?,?,?)").run(tenantId, skill.id, skill.version, data);
   }
   // Backfill old listings and save a new snapshot when publishing changes a business's offers.
   function sync(): string[] {
-    return atomic(() => {
+    function snapshot() {
       const groups = new Map<string, { name: string; listingIds: string[] }>();
       for (const listing of store.listListings(tenantId)) {
         const id = businessId(listing.hostName);
@@ -135,17 +155,34 @@ export function createBusinessSkills(store: ReturnType<typeof createStore>, tena
         if (group) group.listingIds.push(listing.id);
         else groups.set(id, { name: displayBusinessName(listing), listingIds: [listing.id] });
       }
+      const existing = new Map(db.prepare("SELECT data FROM business_skills WHERE tenant_id=?").all(tenantId).map(row => {
+        const saved = JSON.parse(row.data as string) as BusinessSkill;
+        return [saved.id, saved];
+      }));
+      const changed: BusinessSkill[] = [];
       for (const [id, group] of groups) {
-        const saved = current(id);
+        const saved = existing.get(id);
         if (!saved) {
-          save({ id, name: group.name, category: "accommodation", listingIds: group.listingIds,
+          changed.push({ id, name: group.name, category: "accommodation", listingIds: group.listingIds,
             capabilities: ["discover_stays", "get_stay_details", "create_quote"], requiresApproval: true,
             version: 1, summary: "", knowledge: "", updatedAt: new Date().toISOString(), schemaVersion: "1.0" });
         } else if (saved.name !== group.name || JSON.stringify(saved.listingIds) !== JSON.stringify(group.listingIds)) {
-          save({ ...saved, name: group.name, listingIds: group.listingIds, version: saved.version + 1, updatedAt: new Date().toISOString() });
+          changed.push({ ...saved, name: group.name, listingIds: group.listingIds, version: saved.version + 1, updatedAt: new Date().toISOString() });
         }
       }
-      return [...groups.keys()];
+      return { ids: [...groups.keys()], changed };
+    }
+    const preview = snapshot();
+    if (!preview.changed.length) return preview.ids;
+    return atomic(() => {
+      const fresh = snapshot();
+      if (fresh.changed.length) {
+        const values = fresh.changed.flatMap(skill => [tenantId, skill.id, skill.version, JSON.stringify(skill)]);
+        const placeholders = fresh.changed.map(() => "(?,?,?,?)").join(",");
+        db.prepare(`INSERT INTO business_skills(tenant_id,id,version,data) VALUES ${placeholders} ON CONFLICT(tenant_id,id) DO UPDATE SET version=excluded.version,data=excluded.data`).run(...values);
+        db.prepare(`INSERT INTO business_skill_history(tenant_id,id,version,data) VALUES ${placeholders}`).run(...values);
+      }
+      return fresh.ids;
     });
   }
   function list(): BusinessSkill[] {
@@ -157,53 +194,63 @@ export function createBusinessSkills(store: ReturnType<typeof createStore>, tena
     return skill;
   }
   function forListing(listingId: string): BusinessSkill {
-    const skill = list().find(candidate => candidate.listingIds.includes(listingId));
+    const skill = discover().find(candidate => candidate.listingIds.includes(listingId));
     if (!skill) throw new Error("Business listing not found.");
     return skill;
   }
   function details(id: string, listingId: string): BusinessDetails {
-    const skill = profile(id);
+    const { business: skill, ownerTenantId } = resolve(id, { allowExistingBooking: true });
     if (!skill.listingIds.includes(listingId)) throw new Error("Listing does not belong to this business.");
-    const listing = store.listListings(tenantId).find(candidate => candidate.id === listingId);
+    const listing = store.listListings(ownerTenantId).find(candidate => candidate.id === listingId);
     if (!listing) throw new Error("Business listing not found.");
     return { ...listing, businessId: skill.id, businessName: skill.name, businessSkill: { version: skill.version, summary: skill.summary, knowledge: skill.knowledge } };
   }
+  function discover(): BusinessSkill[] {
+    const owned = list();
+    const shared = db.prepare("SELECT b.data,b.tenant_id FROM business_skills b JOIN agent_publications p ON p.skill_id=b.id AND p.owner_tenant_id=b.tenant_id AND p.source='business' WHERE b.tenant_id!=?").all(tenantId);
+    return [...owned, ...shared.map(row => decorate(JSON.parse(row.data as string) as BusinessSkill, row.tenant_id as string))];
+  }
   function search(filters: SearchFilters): BusinessListing[] {
-    const skills = new Map(list().map(skill => [skill.id, skill]));
-    return store.listListings(tenantId, filters).map(listing => {
-      const id = businessId(listing.hostName);
-      return { ...listing, businessId: id, businessName: skills.get(id)!.name };
+    return discover().flatMap(skill => {
+      const { ownerTenantId } = resolve(skill.id);
+      return store.listListings(ownerTenantId, filters).filter(listing => skill.listingIds.includes(listing.id)).map(listing => ({ ...listing, businessId: skill.id, businessName: skill.name }));
     });
   }
   function quote(id: string, input: QuoteInput): BusinessQuote {
-    const listing = details(id, input.listingId);
-    return { ...store.createQuote(tenantId, input), businessId: listing.businessId, businessName: listing.businessName, skillVersion: listing.businessSkill.version };
+    const { business: skill, ownerTenantId } = resolve(id, { allowExistingBooking: !!input.reservationId });
+    if (!skill.listingIds.includes(input.listingId)) throw new Error("Listing does not belong to this business.");
+    return { ...store.createQuote(tenantId, input, ownerTenantId), businessId: skill.id, businessName: skill.name, skillVersion: skill.version };
   }
   function update(id: string, input: SkillUpdate): BusinessSkill {
     profile(id);
-    const args = validateInput(input, schema({ version: { type: "integer", minimum: 1 }, summary: { type: "string", maxLength: 240 }, knowledge: { type: "string", maxLength: 4000 } }, ["version", "summary", "knowledge"]));
+    const args = validateInput(Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined)), schema({ version: { type: "integer", minimum: 1 }, summary: { type: "string", maxLength: 240 }, knowledge: { type: "string", maxLength: 4000 }, visibility: { type: "string", enum: ["private", "public"] } }, ["version", "summary", "knowledge"]));
     return atomic(() => {
       const previous = current(id);
       if (!previous) throw new Error("Business not found.");
       if (previous.version !== args.version) throw new Error("Business skill version conflict. Reload the latest skill before saving.");
-      const saved: BusinessSkill = { ...previous, summary: (args.summary as string).trim(), knowledge: (args.knowledge as string).trim(), version: previous.version + 1, updatedAt: new Date().toISOString() };
+      const saved: BusinessSkill = { ...previous, summary: (args.summary as string).trim(), knowledge: (args.knowledge as string).trim(), visibility: args.visibility === undefined ? previous.visibility : validateVisibility(args.visibility), version: previous.version + 1, updatedAt: new Date().toISOString() };
+      publications.set(tenantId, saved.id, "business", saved.visibility || "private");
       save(saved);
       return saved;
     });
   }
+  function setVisibility(id: string, visibility: unknown, version: number): BusinessSkill {
+    const previous = profile(id);
+    return update(id, { version, summary: previous.summary, knowledge: previous.knowledge, visibility: validateVisibility(visibility) });
+  }
   function history(id: string): BusinessSkill[] {
     profile(id);
-    return db.prepare("SELECT data,version FROM business_skill_history WHERE tenant_id=? AND id=? ORDER BY version").all(tenantId, id).map(row => JSON.parse(row.data as string) as BusinessSkill);
+    return db.prepare("SELECT data,version FROM business_skill_history WHERE tenant_id=? AND id=? ORDER BY version").all(tenantId, id).map(row => ({ ...JSON.parse(row.data as string) as BusinessSkill, canEdit: true, visibility: (JSON.parse(row.data as string) as BusinessSkill).visibility || "private" }));
   }
   function manifest(id: string): BusinessManifest {
-    return { ...profile(id), protocol: "agentbridge.skill.v1", endpoint: `/api/businesses/${id}`, operations: structuredClone(operations) };
+    return { ...resolve(id, { allowExistingBooking: true }).business, protocol: "agentbridge.skill.v1", endpoint: `/api/businesses/${id}`, operations: structuredClone(operations) };
   }
   function validate(action: string, input: unknown) {
     if (!Object.hasOwn(operations, action)) throw new Error("Unsupported business skill action. No transaction was performed.");
     return validateInput(input, operations[action as keyof typeof operations].inputSchema);
   }
   function invoke(id: string, action: string, input: unknown) {
-    const skill = profile(id);
+    const skill = resolve(id, { allowExistingBooking: true }).business;
     const args = validate(action, input);
     switch (action) {
       case "profile": return skill;
@@ -213,5 +260,6 @@ export function createBusinessSkills(store: ReturnType<typeof createStore>, tena
       default: throw new Error("Unsupported business skill action.");
     }
   }
-  return { list, forListing, profile, search, details, quote, update, history, manifest, validate, invoke };
+  sync();
+  return { list, discover, current, resolve, forListing, profile, search, details, quote, update, setVisibility, history, manifest, validate, invoke };
 }

@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { createBusinessSkills, type BusinessSkill } from "./business-skills.ts";
 import type { createStore } from "./store.ts";
+import { createAgentPublications, validateVisibility, type AgentVisibility } from "./agent-publications.ts";
 
 export type ServiceOffer = { title: string; items: Array<{ label: string; amountCents: number }> };
 export type LibrarySkill = {
@@ -18,11 +19,13 @@ export type LibrarySkill = {
   businessId?: string;
   agentUrl?: string;
   serviceOffer?: ServiceOffer;
+  visibility?: AgentVisibility;
+  canEdit?: boolean;
 };
-export type LibraryDraft = Pick<LibrarySkill, "name" | "ownerType" | "ownerName" | "kind" | "category" | "summary" | "content" | "agentUrl" | "serviceOffer">;
+export type LibraryDraft = Pick<LibrarySkill, "name" | "ownerType" | "ownerName" | "kind" | "category" | "summary" | "content" | "agentUrl" | "serviceOffer" | "visibility">;
 type Query = { query?: string; ownerType?: string; kind?: string };
-const portableFields = ["name", "ownerType", "ownerName", "kind", "category", "summary", "content", "agentUrl", "serviceOffer"];
-const generatedFields = ["id", "source", "version", "updatedAt", "businessId"];
+const portableFields = ["name", "ownerType", "ownerName", "kind", "category", "summary", "content", "agentUrl", "serviceOffer", "visibility"];
+const generatedFields = ["id", "source", "version", "updatedAt", "businessId", "canEdit"];
 const limits: Record<string, number> = { name: 100, ownerName: 80, category: 60, summary: 240, content: 12000 };
 function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value) || ![Object.prototype, null].includes(Object.getPrototypeOf(value))) throw new Error("Skill data must be a JSON object.");
@@ -50,10 +53,11 @@ function draft(input: unknown, partial = false, allowGenerated = false): Partial
   const result: Record<string, unknown> = {};
   for (const key of portableFields) {
     if (!Object.hasOwn(raw, key)) {
-      if (!partial && key !== "agentUrl" && key !== "serviceOffer") throw new Error(`${key} is required.`);
+      if (!partial && key !== "agentUrl" && key !== "serviceOffer" && key !== "visibility") throw new Error(`${key} is required.`);
       continue;
     }
     const value = raw[key];
+    if (key === "visibility") { result[key] = validateVisibility(value); continue; }
     if (key === "serviceOffer") {
       result[key] = validateServiceOffer(value);
       continue;
@@ -79,6 +83,7 @@ function draft(input: unknown, partial = false, allowGenerated = false): Partial
   }
   if (result.serviceOffer && ((result.ownerType !== undefined && result.ownerType !== "business") || (result.kind !== undefined && result.kind !== "agent")))
     throw new Error("Only a business agent can publish a test service offer.");
+  if (result.visibility === "public" && ((result.ownerType !== undefined && result.ownerType !== "business") || (result.kind !== undefined && result.kind !== "agent"))) throw new Error("Only business agents can be public. Personal entries stay private.");
   if (partial && !Object.keys(result).length) throw new Error("The file contains no editable skill fields.");
   return result as Partial<LibraryDraft>;
 }
@@ -116,12 +121,24 @@ const examples: Array<{ key: string } & LibraryDraft> = [
   },
 ];
 
+const catalogTenant = "agentbridge-example-catalog-v1";
+const catalogOffers = [
+  ["bike-repair", "Lantern Cycle Desk", "Repairs & services", "Bicycle bike repair: flat tire and inner tube replacement.", "Bicycle flat tire repair", [["Repair labor", 3500], ["Inner tube", 1200]]],
+  ["home-cleaning", "Clover Home Care", "Home services", "Home house cleaning for kitchens, bathrooms and living rooms.", "Two-hour starter home clean", [["Cleaning labor", 7500], ["Cleaning supplies", 1000]]],
+  ["pet-grooming", "Poppy Pet Studio", "Pet care", "Dog pet grooming, washing and brushing for small dogs.", "Small dog wash and brush", [["Wash and brush", 4000], ["Shampoo", 500]]],
+  ["hair-salon", "Willow Hair Studio", "Beauty & grooming", "Hair salon haircuts, wash and simple styling.", "Haircut and wash", [["Haircut", 3000], ["Hair wash", 500]]],
+  ["tutoring", "Maple Learning Desk", "Education", "Math mathematics tutoring, homework help and introductory lessons.", "Thirty-minute introductory math lesson", [["Tutoring session", 3000]]],
+  ["cafe", "Morning Lantern Café", "Food & drink", "Café coffee, pastries and breakfast bundles for pickup inquiries.", "Coffee and pastry bundle for two", [["Two coffees", 1000], ["Two pastries", 800]]],
+  ["tech-support", "Beacon Tech Help", "Technology support", "Computer laptop tech support, setup and software troubleshooting.", "Thirty-minute computer setup help", [["Technical support session", 4000]]],
+  ["creative", "Paper Kite Creative", "Creative services", "Graphic design for posters, event flyers and social media artwork.", "Single-page event flyer draft", [["Design draft", 5000], ["One revision", 1000]]],
+] as const;
+
 function connected(business: BusinessSkill): LibrarySkill {
   return {
     id: business.id, businessId: business.id, name: business.name, ownerType: "business", ownerName: business.name,
     kind: "agent", category: "Accommodation", summary: business.summary,
     content: [business.summary, business.knowledge, "Connected capabilities: discover published stays, read owned room details, and prepare quotes. Customer approval is required for booking; this profile does not grant payment or transaction authority."].filter(Boolean).join("\n\n"),
-    source: "connected", version: business.version, updatedAt: business.updatedAt,
+    visibility: business.visibility || "private", canEdit: business.canEdit ?? true, source: "connected", version: business.version, updatedAt: business.updatedAt,
   };
 }
 
@@ -143,6 +160,7 @@ export function skillSearchTerms(query: string): string[] {
 export function createSkillLibrary(store: ReturnType<typeof createStore>, tenantId: string) {
   store.getPreferences(tenantId);
   const db = store.db;
+  const publications = createAgentPublications(db);
   db.exec(`
     CREATE TABLE IF NOT EXISTS skill_library (
       tenant_id TEXT NOT NULL REFERENCES tenants(id), id TEXT NOT NULL, source TEXT NOT NULL,
@@ -161,20 +179,50 @@ export function createSkillLibrary(store: ReturnType<typeof createStore>, tenant
   }
   function current(id: string): LibrarySkill | undefined {
     const row = db.prepare("SELECT data FROM skill_library WHERE tenant_id=? AND id=?").get(tenantId, id);
-    return row ? JSON.parse(row.data as string) as LibrarySkill : undefined;
+    return row ? decorate(JSON.parse(row.data as string) as LibrarySkill, tenantId) : undefined;
+  }
+  function decorate(skill: LibrarySkill, ownerTenantId: string): LibrarySkill {
+    return { ...skill, visibility: publications.get(skill.id)?.owner_tenant_id === ownerTenantId ? "public" : "private", canEdit: ownerTenantId === tenantId };
   }
   function save(skill: LibrarySkill) {
-    const data = JSON.stringify(skill);
+    const { canEdit: _canEdit, ...saved } = skill;
+    const data = JSON.stringify(saved);
     db.prepare("INSERT INTO skill_library (tenant_id,id,source,version,data) VALUES (?,?,?,?,?) ON CONFLICT(tenant_id,id) DO UPDATE SET source=excluded.source,version=excluded.version,data=excluded.data").run(tenantId, skill.id, skill.source, skill.version, data);
     db.prepare("INSERT INTO skill_library_history (tenant_id,id,version,data) VALUES (?,?,?,?)").run(tenantId, skill.id, skill.version, data);
   }
-  atomic(() => {
-    if (db.prepare("SELECT tenant_id FROM skill_library_initialized WHERE tenant_id=?").get(tenantId)) return;
-    for (const { key, ...example } of examples) {
+  function insertExamples(ownerId: string, skills: LibrarySkill[]) {
+    if (!skills.length) return;
+    const rows = skills.map(skill => ({ ...skill, data: JSON.stringify(skill) }));
+    db.prepare(`INSERT INTO skill_library(tenant_id,id,source,version,data) VALUES ${rows.map(() => "(?,?,?,?,?)").join(",")}`)
+      .run(...rows.flatMap(row => [ownerId, row.id, row.source, row.version, row.data]));
+    db.prepare(`INSERT INTO skill_library_history(tenant_id,id,version,data) VALUES ${rows.map(() => "(?,?,?,?)").join(",")}`)
+      .run(...rows.flatMap(row => [ownerId, row.id, row.version, row.data]));
+  }
+  const initialized = () => db.prepare("SELECT tenant_id FROM skill_library_initialized WHERE tenant_id=?").get(tenantId);
+  if (!initialized()) atomic(() => {
+    if (initialized()) return;
+    const skills = examples.map(({ key, ...example }): LibrarySkill => {
       const id = `library_${createHash("sha256").update(JSON.stringify([tenantId, key])).digest("hex").slice(0, 24)}`;
-      save({ ...example, id, source: "example", version: 1, updatedAt: new Date().toISOString() });
-    }
+      return { ...example, id, source: "example", version: 1, updatedAt: new Date().toISOString() };
+    });
+    insertExamples(tenantId, skills);
     db.prepare("INSERT INTO skill_library_initialized VALUES (?)").run(tenantId);
+  });
+  const catalogIds = () => new Set(db.prepare("SELECT id FROM skill_library WHERE tenant_id=?").all(catalogTenant).map(row => row.id));
+  const savedCatalogIds = catalogIds();
+  if (catalogOffers.some(([key]) => !savedCatalogIds.has(`catalog_${key}`))) atomic(() => {
+    const existing = catalogIds();
+    db.prepare("INSERT OR IGNORE INTO tenants(id,created_at) VALUES (?,?)").run(catalogTenant, new Date().toISOString());
+    const skills = catalogOffers.filter(([key]) => !existing.has(`catalog_${key}`)).map(([key, name, category, summary, title, prices]): LibrarySkill => {
+      const id = `catalog_${key}`;
+      return { id, name, ownerName: name, ownerType: "business", kind: "agent", category,
+        summary: `Fictional example. ${summary}`, content: `Fictional example business for test conversations only. ${summary} Offer only the saved service scope and itemized prices. Ask for useful details before preparing the test quote. No real order, appointment, work, booking or payment is performed. The customer must review and explicitly approve the test quote; do not treat a chat message as approval. Never invent availability, stock, health or safety guarantees, extra fees or completed work.`,
+        serviceOffer: { title, items: prices.map(([label, amountCents]) => ({ label, amountCents })) },
+        source: "example", version: 1, updatedAt: new Date().toISOString(), visibility: "public" };
+    });
+    insertExamples(catalogTenant, skills);
+    if (skills.length) db.prepare(`INSERT INTO agent_publications(skill_id,owner_tenant_id,source) VALUES ${skills.map(() => "(?,?,?)").join(",")}`)
+      .run(...skills.flatMap(skill => [skill.id, catalogTenant, "library"]));
   });
   const businesses = createBusinessSkills(store, tenantId);
   function list(query: Query = {}): LibrarySkill[] {
@@ -189,15 +237,16 @@ export function createSkillLibrary(store: ReturnType<typeof createStore>, tenant
     const matches = (skill: LibrarySkill) => {
       if (!rawText) return true;
       if (!text) return false;
-      const haystack = searchText([skill.name, skill.ownerName, skill.category, skill.summary, skill.content].join(" "));
+      const haystack = searchText([skill.name, skill.ownerName, skill.category, skill.summary, skill.canEdit ? skill.content : "", skill.serviceOffer?.title || "", ...(skill.serviceOffer?.items.map(item => item.label) || [])].join(" "));
       if (haystack.includes(text)) return true;
       const words = new Set(searchTokens(haystack));
       // Require every service term, so a broader phrase cannot silently drop its business domain.
       return tokens.length > 0 && tokens.every(word => words.has(word));
     };
-    const standalone = db.prepare("SELECT data FROM skill_library WHERE tenant_id=? ORDER BY rowid").all(tenantId).map(row => JSON.parse(row.data as string) as LibrarySkill);
+    const standalone = db.prepare("SELECT data FROM skill_library WHERE tenant_id=? ORDER BY rowid").all(tenantId).map(row => decorate(JSON.parse(row.data as string) as LibrarySkill, tenantId));
+    const shared = db.prepare("SELECT s.data,s.tenant_id FROM skill_library s JOIN agent_publications p ON p.skill_id=s.id AND p.owner_tenant_id=s.tenant_id AND p.source='library' WHERE s.tenant_id!=?").all(tenantId).map(row => decorate(JSON.parse(row.data as string) as LibrarySkill, row.tenant_id as string));
     const custom = standalone.filter(skill => skill.source === "custom").sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || a.id.localeCompare(b.id));
-    return [...custom, ...standalone.filter(skill => skill.source !== "custom"), ...businesses.list().map(connected)].filter(skill =>
+    return [...custom, ...standalone.filter(skill => skill.source !== "custom"), ...shared, ...businesses.discover().map(connected)].filter(skill =>
       (!query.ownerType || query.ownerType === "all" || skill.ownerType === query.ownerType) &&
       (!query.kind || query.kind === "all" || skill.kind === query.kind) &&
       matches(skill)
@@ -207,16 +256,32 @@ export function createSkillLibrary(store: ReturnType<typeof createStore>, tenant
     if (typeof id !== "string" || !id || id.length > 200) throw new Error("Agent Hub entry not found.");
     const saved = current(id);
     if (saved) return saved;
-    const business = businesses.list().find(item => item.id === id);
+    const business = businesses.current(id);
     if (business) return connected(business);
     throw new Error("Agent Hub entry not found.");
+  }
+  function resolve(id: string, options: { allowExistingBooking?: boolean } = {}): { skill: LibrarySkill; ownerTenantId: string } {
+    if (typeof id !== "string" || !id || id.length > 200) throw new Error("Agent Hub entry not found.");
+    const owned = current(id);
+    if (owned) return { skill: owned, ownerTenantId: tenantId };
+    const publication = publications.get(id);
+    if (publication?.source === "library") {
+      const row = db.prepare("SELECT data FROM skill_library WHERE tenant_id=? AND id=?").get(publication.owner_tenant_id, id);
+      if (row) {
+        const skill = JSON.parse(row.data as string) as LibrarySkill;
+        if (skill.ownerType === "business" && skill.kind === "agent") return { skill: decorate(skill, publication.owner_tenant_id), ownerTenantId: publication.owner_tenant_id };
+      }
+    }
+    try { const resolved = businesses.resolve(id, options); return { skill: connected(resolved.business), ownerTenantId: resolved.ownerTenantId }; }
+    catch { throw new Error("Agent Hub entry not found."); }
   }
   function publish(input: unknown): LibrarySkill {
     const portable = draft(input) as LibraryDraft;
     return atomic(() => {
       const count = db.prepare("SELECT count(*) AS count FROM skill_library WHERE tenant_id=? AND source='custom'").get(tenantId)!.count as number;
       if (count >= 100) throw new Error("This workspace supports up to 100 custom Agent Hub entries.");
-      const saved: LibrarySkill = { ...portable, id: `library_${randomUUID()}`, source: "custom", version: 1, updatedAt: new Date().toISOString() };
+      const saved: LibrarySkill = { ...portable, id: `library_${randomUUID()}`, source: "custom", version: 1, updatedAt: new Date().toISOString(), visibility: portable.visibility || "private", canEdit: true };
+      publications.set(tenantId, saved.id, "library", saved.visibility!);
       save(saved); return saved;
     });
   }
@@ -230,17 +295,24 @@ export function createSkillLibrary(store: ReturnType<typeof createStore>, tenant
       const previous = current(id);
       if (!previous) throw new Error("Agent Hub entry not found.");
       if (previous.version !== raw.version) throw new Error("Agent Hub entry version conflict. Reload before saving.");
-      const saved: LibrarySkill = { ...portable, id: previous.id, source: previous.source, version: previous.version + 1, updatedAt: new Date().toISOString() };
+      const saved: LibrarySkill = { ...portable, id: previous.id, source: previous.source, version: previous.version + 1, updatedAt: new Date().toISOString(), visibility: portable.ownerType === "business" && portable.kind === "agent" ? portable.visibility || previous.visibility || "private" : "private", canEdit: true };
+      publications.set(tenantId, saved.id, "library", saved.visibility!);
       save(saved); return saved;
     });
+  }
+  function setVisibility(id: string, visibility: unknown, version: number): LibrarySkill {
+    const nextVisibility = validateVisibility(visibility);
+    const saved = read(id);
+    if (saved.source === "connected") return connected(businesses.setVisibility(id, nextVisibility, version));
+    return update(id, { ...saved, visibility: nextVisibility, version });
   }
   function history(id: string): LibrarySkill[] {
     const saved = read(id);
     if (saved.source === "connected") return businesses.history(id).map(connected);
-    return db.prepare("SELECT data FROM skill_library_history WHERE tenant_id=? AND id=? ORDER BY version").all(tenantId, id).map(row => JSON.parse(row.data as string) as LibrarySkill);
+    return db.prepare("SELECT data FROM skill_library_history WHERE tenant_id=? AND id=? ORDER BY version").all(tenantId, id).map(row => ({ ...JSON.parse(row.data as string) as LibrarySkill, canEdit: true, visibility: (JSON.parse(row.data as string) as LibrarySkill).visibility || "private" }));
   }
   function manifest(id: string): LibrarySkill { return read(id); }
-  return { list, read, publish, update, history, manifest };
+  return { list, read, resolve, current: resolve, publish, update, setVisibility, history, manifest };
 }
 
 function frontmatterValue(raw: string): string | undefined {
@@ -261,7 +333,9 @@ export function parseSkillImport(text: string, filename: string): Partial<Librar
   if (/\.json$/i.test(filename)) {
     let parsed: unknown;
     try { parsed = JSON.parse(content); } catch { throw new Error("The JSON file is malformed."); }
-    return draft(parsed, true, true);
+    const imported = draft(parsed, true, true);
+    delete imported.visibility; // A file cannot grant permission to publish to other customers.
+    return imported;
   }
   const lines = content.replaceAll("\r\n", "\n").split("\n");
   const imported: Record<string, unknown> = { content };

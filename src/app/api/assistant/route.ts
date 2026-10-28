@@ -64,16 +64,21 @@ export async function POST(request: Request) {
           case "search_skills":
             return library.list(args).map(discoverAgent);
           case "read_skill":
-            return discoverAgent(library.read(args.skillId as string));
+            return discoverAgent(library.resolve(args.skillId as string).skill);
           case "search_stays":
             searchCriteria = args;
             results = skills.search(args);
             return results;
-          case "business_profile":
-            return skills.invoke(args.businessId as string, "profile", {});
+          case "business_profile": {
+            const business = skills.resolve(args.businessId as string).business;
+            const { knowledge: _knowledge, ...metadata } = business;
+            return business.canEdit ? business : metadata;
+          }
           case "stay_details": {
             const business = skills.forListing(args.listingId as string);
-            return skills.invoke(business.id, "get_stay_details", args);
+            const details = skills.details(business.id, args.listingId as string);
+            const { knowledge: _knowledge, ...metadata } = details.businessSkill;
+            return business.canEdit ? details : { ...details, businessSkill: metadata };
           }
           case "create_quote": {
             const business = skills.forListing(args.listingId as string);

@@ -30,7 +30,14 @@ async function expectRejected(response: APIResponse) {
 
 test("library seeds business and personal examples alongside connected room agents", async ({ request }) => {
   const { skills }: { skills: LibrarySkill[] } = await readJSON(await request.get("/api/skills"));
-  expect(skills.filter(skill => skill.source === "example" && skill.ownerType === "business")).toHaveLength(3);
+  expect(skills.filter(skill => skill.source === "example" && skill.ownerType === "business")).toHaveLength(11);
+  const sharedExamples = skills.filter(skill => skill.source === "example" && !skill.canEdit);
+  expect(sharedExamples).toHaveLength(8);
+  for (const skill of sharedExamples) {
+    expect(skill).toMatchObject({ visibility: "public", ownerType: "business", kind: "agent" });
+    expect(skill).not.toHaveProperty("content");
+    expect(skill.serviceOffer?.items.length).toBeGreaterThan(0);
+  }
   expect(skills.filter(skill => skill.source === "example" && skill.ownerType === "customer")).toHaveLength(3);
   const connected = skills.filter(skill => skill.source === "connected");
   expect(connected).toHaveLength(3);
@@ -154,13 +161,16 @@ test("phone users publish an agent and import a personal skill, then reopen both
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/#skills");
   await expect(page.getByRole("heading", { name: "Agent Hub", exact: true })).toBeVisible();
-  await expect(page.locator(".library-card")).toHaveCount(9);
+  await expect(page.locator(".library-card").first()).toBeVisible();
   await page.getByRole("button", { name: "Add agent or skill", exact: true }).click();
   const editor = page.getByRole("dialog", { name: "Add agent or skill", exact: true });
   await expect(editor.getByRole("button", { name: "Close Agent Hub dialog", exact: true })).toBeFocused();
   await editor.getByLabel("Entry name", { exact: true }).fill("Orchid phone concierge");
   await editor.getByLabel("Entry type", { exact: true }).selectOption("agent");
   await editor.getByLabel("Owner type", { exact: true }).selectOption("business");
+  const publication = editor.getByRole("checkbox", { name: "Let other customers discover this business", exact: true });
+  await expect(publication).not.toBeChecked();
+  await publication.check();
   await editor.getByLabel("Owner name", { exact: true }).fill("Orchid Guest House");
   await editor.getByLabel("Category", { exact: true }).fill("Guest services");
   await editor.getByLabel("Short description", { exact: true }).fill(draft.summary);
@@ -171,7 +181,7 @@ test("phone users publish an agent and import a personal skill, then reopen both
     const url = new URL(response.url());
     return response.request().method() === "GET" && url.pathname === "/api/skills" && url.searchParams.get("metadata") === "1";
   });
-  await editor.getByRole("button", { name: "Publish entry", exact: true }).click();
+  await editor.getByRole("button", { name: "Publish business agent", exact: true }).click();
   const publishedResults = await readJSON(await refreshedFromDatabase);
   expect(publishedResults.skills.some((entry: LibrarySkill) => entry.name === "Orchid phone concierge")).toBe(true);
   for (const entry of publishedResults.skills) expect(entry).not.toHaveProperty("content");
@@ -179,6 +189,7 @@ test("phone users publish an agent and import a personal skill, then reopen both
   const agentCard = page.locator(".library-card").filter({ has: page.getByRole("heading", { name: "Orchid phone concierge", exact: true }) });
   await expect(agentCard).toContainText("Your entry");
   await expect(agentCard).toContainText("Business · Orchid Guest House");
+  await expect(agentCard).toContainText("Discoverable by other customers");
 
   const beforeImport = (await readJSON(await page.request.get("/api/skills"))).skills.length;
   await page.getByLabel("Import skill file", { exact: true }).setInputFiles({
@@ -194,10 +205,12 @@ test("phone users publish an agent and import a personal skill, then reopen both
   await imported.getByLabel("Entry type", { exact: true }).selectOption("skill");
   await imported.getByLabel("Owner name", { exact: true }).fill("Orchid traveler");
   await imported.getByLabel("Category", { exact: true }).fill("Travel planning");
-  await imported.getByRole("button", { name: "Publish entry", exact: true }).click();
+  await expect(imported.getByRole("checkbox", { name: "Let other customers discover this business", exact: true })).toHaveCount(0);
+  await imported.getByRole("button", { name: "Save entry", exact: true }).click();
   await expect(imported).not.toBeVisible();
   const personalCard = page.locator(".library-card").filter({ has: page.getByRole("heading", { name: "Personal neighborhood checklist", exact: true }) });
   await expect(personalCard).toContainText("Personal · Orchid traveler");
+  await expect(personalCard).toContainText("Private to your workspace");
   await page.reload();
   await expect(agentCard).toBeVisible();
   await expect(personalCard).toBeVisible();
@@ -218,7 +231,7 @@ test("phone users publish an agent and import a personal skill, then reopen both
 test("phone connected-agent management refreshes saved business knowledge in the library", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/#skills");
-  await expect(page.locator(".library-card")).toHaveCount(9);
+  await expect(page.locator(".library-card").first()).toBeVisible();
   const { skills }: { skills: LibrarySkill[] } = await readJSON(await page.request.get("/api/skills"));
   const business = skills.find(skill => skill.source === "connected")!;
   const card = page.locator(".library-card").filter({ has: page.getByRole("heading", { name: business.name, exact: true }) });
@@ -242,4 +255,68 @@ test("phone connected-agent management refreshes saved business knowledge in the
   const { skill: saved } = await readJSON(await page.request.get(endpoint(business.id)));
   expect(saved).toMatchObject({ id: business.id, businessId: business.businessId, source: "connected", version: business.version + 1 });
   expect(saved.content).toContain("Luggage can be stored at reception after 09:00.");
+});
+
+test("phone customers find another business by service and chat without owner controls or raw instructions", async ({ page, request, baseURL }) => {
+  const headers = origin(baseURL);
+  const details = {
+    ...draft, name: "Glimmer repair test agent", ownerName: "Glimmer fictional workshop", category: "Bicycle repair",
+    summary: "Fictional bicycle repair and wheel puncture service for test conversations.",
+    content: "Owner-instructions-marker. Explain the saved repair offer and ask the customer to review it. Never perform real work or take payment.",
+    serviceOffer: { title: "Wheel puncture repair", items: [{ label: "Repair labor", amountCents: 3500 }, { label: "Inner tube", amountCents: 1200 }] },
+  };
+  const { skill: shared } = await readJSON(await request.post("/api/skills", { headers, data: { ...details, visibility: "public" } }));
+  const { skill: privateAgent } = await readJSON(await request.post("/api/skills", { headers, data: { ...details, name: "Glimmer private repair agent" } }));
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto("/#skills");
+  await expect(page.locator(".library-card").first()).toBeVisible();
+  await page.getByLabel("Search agents and skills", { exact: true }).fill("wheel puncture");
+  const card = page.locator(".library-card").filter({ has: page.getByRole("heading", { name: shared.name, exact: true }) });
+  await expect(card).toBeVisible();
+  await expect(page.getByRole("heading", { name: privateAgent.name, exact: true })).toHaveCount(0);
+  await expect(card).not.toContainText("Your entry");
+  await expect(card.getByRole("button", { name: `Edit ${shared.name}`, exact: true })).toHaveCount(0);
+  await card.getByRole("button", { name: `View ${shared.name}`, exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: shared.name, exact: true });
+  await expect(dialog).not.toContainText("Owner-instructions-marker");
+  await expect(dialog.getByRole("button", { name: "Edit entry", exact: true })).toHaveCount(0);
+  await expect(dialog.getByRole("button", { name: "Use as template", exact: true })).toHaveCount(0);
+  await expect(dialog.getByRole("link", { name: "Download entry" })).toHaveCount(0);
+  const { skill: metadata } = await readJSON(await page.request.get(`${endpoint(shared.id)}?metadata=1`));
+  expect(metadata).toMatchObject({ id: shared.id, visibility: "public", canEdit: false });
+  expect(metadata).not.toHaveProperty("content");
+  const directory = await readJSON(await page.request.get("/api/skills", { params: { q: "wheel puncture" } }));
+  expect(directory.skills.find((entry: LibrarySkill) => entry.id === shared.id)).not.toHaveProperty("content");
+  await expectRejected(await page.request.get(endpoint(shared.id)));
+  await expectRejected(await page.request.get(`${endpoint(shared.id)}?download=1`));
+  await expectRejected(await page.request.get(`${endpoint(shared.id)}?metadata=1&download=1`));
+  await dialog.getByRole("button", { name: `Chat with ${shared.name}`, exact: true }).click();
+  await expect(dialog.getByLabel("Message selected agent", { exact: true })).toBeVisible();
+  await expect(dialog).not.toContainText("Owner-instructions-marker");
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  expect(await dialog.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+});
+
+test("public accommodation operations hide owner guidance and its downloadable manifest", async ({ request, playwright, baseURL }) => {
+  const headers = origin(baseURL);
+  const { businesses } = await readJSON(await request.get("/api/actions/state"));
+  const original = businesses[0];
+  const { business } = await readJSON(await request.post("/api/actions/save-skill", { headers, data: {
+    businessId: original.id, version: original.version, summary: "Fictional public hotel for privacy checks.", knowledge: "Private-room-guidance-marker.", visibility: "public",
+  } }));
+  const customer = await playwright.request.newContext({ baseURL });
+  const path = `/api/businesses/${encodeURIComponent(business.id)}`;
+  try {
+    await expectRejected(await customer.get(path));
+    const profile = await readJSON(await customer.post(path, { headers, data: { action: "profile", input: {} } }));
+    expect(profile.result).toMatchObject({ id: business.id, canEdit: false, visibility: "public" });
+    expect(profile.result).not.toHaveProperty("knowledge");
+    const details = await readJSON(await customer.post(path, { headers, data: { action: "get_stay_details", input: { listingId: business.listingIds[0] } } }));
+    expect(details.result.businessSkill).not.toHaveProperty("knowledge");
+    expect(JSON.stringify(details)).not.toContain("Private-room-guidance-marker");
+    expect((await readJSON(await request.get(path))).knowledge).toBe("Private-room-guidance-marker.");
+  } finally {
+    await customer.dispose();
+    await readJSON(await request.patch(endpoint(business.id), { headers, data: { version: business.version, visibility: "private" } }));
+  }
 });

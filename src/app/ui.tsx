@@ -78,6 +78,8 @@ type BusinessSkill = {
   knowledge: string;
   updatedAt: string;
   schemaVersion: "1.0";
+  visibility?: "private" | "public";
+  canEdit?: boolean;
 };
 type Reservation = Quote & {
   confirmation: string;
@@ -180,6 +182,7 @@ export default function AgentBridge() {
     [listings, setListings] = useState<Listing[]>([]),
     [businesses, setBusinesses] = useState<BusinessSkill[]>([]),
     [reservations, setReservations] = useState<Reservation[]>([]),
+    [businessReservations, setBusinessReservations] = useState<Reservation[]>([]),
     [messages, setMessages] = useState<Message[]>([]),
     [prefs, setPrefs] = useState<Preferences>({
       budget: 180,
@@ -217,7 +220,8 @@ export default function AgentBridge() {
   const [openAgentId, setOpenAgentId] = useState<string>();
   const [editingSkill, setEditingSkill] = useState<BusinessSkill | null>(null),
     [skillSummary, setSkillSummary] = useState(""),
-    [skillKnowledge, setSkillKnowledge] = useState("");
+    [skillKnowledge, setSkillKnowledge] = useState(""),
+    [skillVisibility, setSkillVisibility] = useState<"private" | "public">("private");
   const activeSearch = useRef<SearchCriteria>({
     checkIn, checkOut, guests, maxNightlyCents: budget * 100, amenities: [],
   });
@@ -237,6 +241,7 @@ export default function AgentBridge() {
     setListings(matches.listings);
     setBusinesses(d.businesses || []);
     setReservations(d.reservations);
+    setBusinessReservations(d.businessReservations || []);
     setPrefs(d.preferences);
     setMessages(d.messages);
     setMode(d.mode);
@@ -486,16 +491,18 @@ export default function AgentBridge() {
         image: "/rooms/private.svg",
         availableFrom: f.get("availableFrom"),
         availableTo: f.get("availableTo"),
+        visibility: f.get("visibility") === "public" ? "public" : "private",
       });
       await refresh();
       setModal(null);
-      notify("Your listing is published and available to the assistant.");
+      notify("Your room is saved. Manage who can discover it from your business agent.");
     });
   };
   const editSkill = (business: BusinessSkill) => {
     setEditingSkill(business);
     setSkillSummary(business.summary || "");
     setSkillKnowledge(business.knowledge || "");
+    setSkillVisibility(business.visibility === "public" ? "public" : "private");
     setError("");
     setModal("skill");
   };
@@ -508,6 +515,7 @@ export default function AgentBridge() {
         version: editingSkill.version,
         summary: skillSummary,
         knowledge: skillKnowledge,
+        visibility: skillVisibility,
       });
       setEditingSkill(data.business);
       setBusinesses(current => current.map(business => business.id === data.business.id ? data.business : business));
@@ -524,10 +532,11 @@ export default function AgentBridge() {
     setEditingSkill(latest);
     setSkillSummary(latest.summary || "");
     setSkillKnowledge(latest.knowledge || "");
+    setSkillVisibility(latest.visibility === "public" ? "public" : "private");
     notify("The saved version is loaded. Your unsaved changes were replaced.");
   });
   const display = listings.filter((l) => kind === "all" || l.type === kind);
-  const active = reservations.filter((r) => r.status === "confirmed");
+  const activeBusinessReservations = businessReservations.filter((r) => r.status === "confirmed");
   const conversationView = view === "home" || view === "discover";
   const conversationStarted = view === "discover" && messages.length > 0;
   return (
@@ -822,19 +831,19 @@ export default function AgentBridge() {
             </div>
             <div className="stats-row">
               <Stat
-                label="Discoverable stays"
+                label="Rooms listed"
                 value={String(all.length)}
-                detail="Connected to the network"
+                detail="One room or unit per listing"
               />
               <Stat
                 label="Confirmed reservations"
-                value={String(active.length)}
+                value={String(activeBusinessReservations.length)}
                 detail="Booked with traveler approval"
               />
               <Stat
                 label="Stay value"
-                value={money(active.reduce((s, r) => s + r.totalCents, 0))}
-                detail="Pay at property · Not collected"
+                value={money(activeBusinessReservations.reduce((s, r) => s + r.totalCents, 0))}
+                detail="Test value · No payment collected"
               />
             </div>
             <div className="workspace-section">
@@ -844,7 +853,7 @@ export default function AgentBridge() {
                   <p>Each listing represents one bookable room or unit.</p>
                 </div>
                 <span className="subtle-pill">
-                  <span className="live-dot" /> Discoverable by AI
+                  <span className="live-dot" /> Connected to your agents
                 </span>
               </div>
               <div className="host-list">
@@ -869,7 +878,7 @@ export default function AgentBridge() {
                       <span>Up to {l.maxGuests} guests</span>
                     </div>
                     <span className="status-tag">
-                      <span /> Published
+                      <span /> {businesses.some(business => business.visibility === "public" && business.listingIds.includes(l.id)) ? "Public" : "Private"}
                     </span>
                     <button
                       aria-label={`View ${l.name}`}
@@ -896,11 +905,12 @@ export default function AgentBridge() {
                 <details className="business-skill" key={business.id}>
                   <summary>
                     <Sparkles size={24} />
-                    <span><strong>{business.name} agent</strong><small>{business.listingIds.length} published {business.listingIds.length === 1 ? "offer" : "offers"}</small></span>
+                    <span><strong>{business.name} agent</strong><small>{business.listingIds.length} {business.listingIds.length === 1 ? "offer" : "offers"} · {business.visibility === "public" ? "Public" : "Private"}</small></span>
                     <ChevronDown size={18} />
                   </summary>
                   <div className="business-skill-body">
                     {business.summary && <p className="business-agent-intro">{business.summary}</p>}
+                    <p>{business.visibility === "public" ? "Other customers can discover this business and chat with its agent." : "Private to your workspace. Edit the agent to let other customers discover it."}</p>
                     <p>Checks availability, answers from published details, and prepares quotes for:</p>
                     <ul>{all.filter((listing) => business.listingIds.includes(listing.id)).map((listing) => <li key={listing.id}>{listing.name}</li>)}</ul>
                     <p className="business-approval-note"><ShieldCheck size={16} /> Booking always requires customer approval.</p>
@@ -917,7 +927,7 @@ export default function AgentBridge() {
             </section>
             <div className="workspace-section">
               <h2>Reservations</h2>
-              {reservations.length === 0 ? (
+              {businessReservations.length === 0 ? (
                 <div className="empty-state compact">
                   <CalendarDays size={25} />
                   <h3>Your next guest is a conversation away.</h3>
@@ -934,7 +944,7 @@ export default function AgentBridge() {
                 </div>
               ) : (
                 <div className="reservation-table">
-                  {reservations.map((r) => (
+                  {businessReservations.map((r) => (
                     <div key={r.id}>
                       <strong>
                         {r.listingName}
@@ -958,7 +968,7 @@ export default function AgentBridge() {
             <div className="host-info">
               <ShieldCheck size={19} />
               <p>
-                Business and customer views share the same reservation records in this workspace. Sample properties are not connected to live hotel inventory.
+                Reservations from your customers appear here. All bookings are test-only, with no real reservations or payments.
               </p>
             </div>
           </div>
@@ -1261,7 +1271,7 @@ export default function AgentBridge() {
                 <span className="eyebrow">CONNECT Your business</span>
                 <h2 id="modal-title">Add a room</h2>
                 <p className="modal-intro">
-                  Publish your room’s details, pricing, availability, and policies.
+                  Add your room’s details, pricing, availability, and policies.
                 </p>
                 <form onSubmit={publish} className="host-form">
                   <div className="segmented">
@@ -1416,9 +1426,10 @@ export default function AgentBridge() {
                   <div className="notice">
                     <ShieldCheck size={17} />
                     <span>
-                      Sample workspace. Listings are stored here and available to this workspace’s assistant. No live hotel inventory or payments are connected.
+                      Visibility applies to the whole business. Adding a room to a public business makes it discoverable too. All bookings are test-only, with no real reservations or payments.
                     </span>
                   </div>
+                  <label className="approval-check"><input type="checkbox" name="visibility" value="public" /><span>Let other customers discover this business and its rooms</span></label>
                   <button
                     className="primary-button full-button"
                     disabled={!!busy}
@@ -1428,7 +1439,7 @@ export default function AgentBridge() {
                     ) : (
                       <Link2 size={17} />
                     )}
-                    Publish to AgentBridge
+                    Save room
                   </button>
                 </form>
               </>
@@ -1450,6 +1461,8 @@ export default function AgentBridge() {
                     <textarea name="knowledge" aria-label="Business knowledge" value={skillKnowledge} maxLength={4000} rows={9} aria-describedby="skill-knowledge-help" placeholder={"Add helpful answers, for example:\nWhere can guests store luggage?\nHow do they reach reception?\nWhat is nearby?"} onChange={event => setSkillKnowledge(event.target.value)} />
                     <small id="skill-knowledge-help" className="field-help">FAQs and guest guidance only. Keep passwords, access codes, and private details out. <span>{skillKnowledge.length}/4,000</span></small>
                   </Field>
+                  <label className="approval-check"><input type="checkbox" checked={skillVisibility === "public"} onChange={event => setSkillVisibility(event.target.checked ? "public" : "private")} /><span>Let other customers discover this business</span></label>
+                  <p className="fine-print">Customers can find your agent and request test bookings for these rooms. Your conversations and agent editor stay private.</p>
                   <div className="skill-save-meta">
                     <span>Version {editingSkill.version || 1}</span>
                     {editingSkill.updatedAt && <span>Saved <SavedTime value={editingSkill.updatedAt} /></span>}
