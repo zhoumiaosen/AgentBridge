@@ -647,7 +647,7 @@ test("known room name routes to its business using normalized token boundaries",
 
 test("business-name substrings and ambiguous names do not prefetch unrelated businesses", async () => {
   const listings = [{ id: "room1", name: "Garden Room", businessId: "bridge-house", businessName: "Bridge House" }];
-  for (const message of ["What does Bridge Houseboat offer?", "Find Garden Roommates.", "Explain Cambridge Houses."]) {
+  for (const message of ["What does Bridge Houseboat offer?", "What does Garden Roommates provide?", "Explain Cambridge Houses."]) {
     const { calls, result } = await mockedNamedBusinessReply(message, listings);
     assert.deepEqual(calls, []);
     assert.equal(result.trace.length, 0);

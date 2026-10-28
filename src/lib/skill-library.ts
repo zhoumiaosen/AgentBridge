@@ -101,6 +101,21 @@ function connected(business: BusinessSkill): LibrarySkill {
   };
 }
 
+const searchFillers = new Set(["a", "an", "and", "for", "of", "the", "to", "with", "agent", "skill", "service", "business", "shop"]);
+const searchAliases: Record<string, string> = { bike: "bicycle", cycle: "bicycle", coffee: "cafe", coffeeshop: "cafe" };
+const searchText = (value: string) => value.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+function searchTokens(text: string): string[] {
+  return text.split(" ").filter(Boolean).map(word => {
+    const singular = word.length > 3 && word.endsWith("ies") ? word.slice(0, -3) + "y"
+      : /(?:s|x|z|ch|sh)es$/.test(word) ? word.slice(0, -2)
+      : word.length > 3 && /s$/.test(word) && !/(?:ss|us|is)$/.test(word) ? word.slice(0, -1) : word;
+    return searchAliases[singular] || singular;
+  });
+}
+export function skillSearchTerms(query: string): string[] {
+  return searchTokens(searchText(query)).filter(word => !searchFillers.has(word));
+}
+
 export function createSkillLibrary(store: ReturnType<typeof createStore>, tenantId: string) {
   store.getPreferences(tenantId);
   const db = store.db;
@@ -144,13 +159,24 @@ export function createSkillLibrary(store: ReturnType<typeof createStore>, tenant
     if (query.query !== undefined && (typeof query.query !== "string" || query.query.length > 200)) throw new Error("Search must be at most 200 characters.");
     if (query.ownerType !== undefined && !["business", "customer", "all", ""].includes(query.ownerType)) throw new Error("Choose business or customer.");
     if (query.kind !== undefined && !["agent", "skill", "all", ""].includes(query.kind)) throw new Error("Choose agent or skill.");
-    const text = (query.query || "").normalize("NFKC").trim().toLowerCase();
+    const rawText = (query.query || "").trim();
+    const text = searchText(rawText);
+    const tokens = skillSearchTerms(rawText);
+    const matches = (skill: LibrarySkill) => {
+      if (!rawText) return true;
+      if (!text) return false;
+      const haystack = searchText([skill.name, skill.ownerName, skill.category, skill.summary, skill.content].join(" "));
+      if (haystack.includes(text)) return true;
+      const words = new Set(searchTokens(haystack));
+      // Require every service term, so a broader phrase cannot silently drop its business domain.
+      return tokens.length > 0 && tokens.every(word => words.has(word));
+    };
     const standalone = db.prepare("SELECT data FROM skill_library WHERE tenant_id=? ORDER BY rowid").all(tenantId).map(row => JSON.parse(row.data as string) as LibrarySkill);
     const custom = standalone.filter(skill => skill.source === "custom").sort((a, b) => b.updatedAt.localeCompare(a.updatedAt) || a.id.localeCompare(b.id));
     return [...custom, ...standalone.filter(skill => skill.source !== "custom"), ...businesses.list().map(connected)].filter(skill =>
       (!query.ownerType || query.ownerType === "all" || skill.ownerType === query.ownerType) &&
       (!query.kind || query.kind === "all" || skill.kind === query.kind) &&
-      (!text || [skill.name, skill.ownerName, skill.category, skill.summary, skill.content].join(" ").normalize("NFKC").toLowerCase().includes(text))
+      matches(skill)
     );
   }
   function read(id: string): LibrarySkill {
