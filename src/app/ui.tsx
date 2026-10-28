@@ -25,7 +25,6 @@ import { ClockIcon as Clock3 } from "@phosphor-icons/react/dist/csr/Clock";
 import { CheckCircleIcon as CheckCircle2 } from "@phosphor-icons/react/dist/csr/CheckCircle";
 import { ChatCircleIcon as MessageCircle } from "@phosphor-icons/react/dist/csr/ChatCircle";
 import { ArrowSquareOutIcon as ExternalLink } from "@phosphor-icons/react/dist/csr/ArrowSquareOut";
-import { BookmarkSimpleIcon as Bookmark } from "@phosphor-icons/react/dist/csr/BookmarkSimple";
 import { SlidersIcon as Settings2 } from "@phosphor-icons/react/dist/csr/Sliders";
 import { CaretDownIcon as ChevronDown } from "@phosphor-icons/react/dist/csr/CaretDown";
 import { ArrowRightIcon as MoveRight } from "@phosphor-icons/react/dist/csr/ArrowRight";
@@ -214,6 +213,7 @@ export default function AgentBridge() {
     [hostAmenities, setHostAmenities] = useState(["Wi-Fi"]),
     [prefDraft, setPrefDraft] = useState(prefs);
   const [agentMatches, setAgentMatches] = useState<AgentMatch[]>([]);
+  const [showRoomResults, setShowRoomResults] = useState(false);
   const [openAgentId, setOpenAgentId] = useState<string>();
   const [editingSkill, setEditingSkill] = useState<BusinessSkill | null>(null),
     [skillSummary, setSkillSummary] = useState(""),
@@ -341,6 +341,7 @@ export default function AgentBridge() {
       const d = await api("search", criteria);
       activeSearch.current = criteria;
       setListings(d.listings);
+      setShowRoomResults(true);
       nav("discover");
     });
   const send = async (text = message) => {
@@ -350,6 +351,8 @@ export default function AgentBridge() {
     setApproved(false);
     setApproval("");
     setAgentMatches([]);
+    setShowRoomResults(false);
+    setTrace([]);
     nav("discover");
     setMessages((m) => [...m, pendingMessage]);
     await run("assistant", async () => {
@@ -371,6 +374,7 @@ export default function AgentBridge() {
       setMessages((m) => [...m, { role: "assistant", content: d.reply }]);
       setTrace(d.trace || []);
       setAgentMatches(d.agents || []);
+      setShowRoomResults(Array.isArray(d.listings));
       if (d.listings) {
         if (d.searchCriteria) {
           activeSearch.current = d.searchCriteria;
@@ -524,16 +528,18 @@ export default function AgentBridge() {
   });
   const display = listings.filter((l) => kind === "all" || l.type === kind);
   const active = reservations.filter((r) => r.status === "confirmed");
+  const conversationView = view === "home" || view === "discover";
+  const conversationStarted = view === "discover" && messages.length > 0;
   return (
-    <div className="product-app">
+    <div className={`product-app${conversationView ? " conversation-app" : ""}${conversationView && !conversationStarted ? " conversation-empty" : ""}`}>
       <a className="skip-link" href="#main-content" onClick={(event) => { event.preventDefault(); main.current?.focus(); }}>Skip to content</a>
       <header className="app-header" inert={!!modal || menuOpen}>
         <button className="app-brand" aria-label="AgentBridge home" onClick={() => nav("home")}><Link2 size={24} /><span>AgentBridge</span></button>
-        <nav className="app-navigation" aria-label="Main navigation">
+        {!conversationView && <nav className="app-navigation" aria-label="Main navigation">
           {workspaceViews.filter(({ id }) => id !== "vision").map(({ id, label, icon: Icon }) => (
             <button className="nav-item" key={id} aria-label={label} aria-current={view === id ? "page" : undefined} onClick={() => nav(id)}><Icon size={24} weight={view === id ? "fill" : "regular"} /><span className="nav-label">{label}</span></button>
           ))}
-        </nav>
+        </nav>}
         <div className="app-header-actions">
           <span className="connection-status"><span className={mode === "live" ? "connected" : ""} />{mode === "live" ? "AI connected" : "Offline"}</span>
           <button className="menu-toggle" aria-label="More" aria-expanded={menuOpen} aria-controls="workspace-menu" data-open={menuOpen} onClick={() => setMenuOpen(true)}><span className="menu-line" /><span className="menu-line" /></button>
@@ -561,23 +567,6 @@ export default function AgentBridge() {
             <div className="skeleton-heading" aria-hidden="true" /><div className="skeleton-line" aria-hidden="true" /><div className="skeleton-action" aria-hidden="true" /><div className="skeleton-row" aria-hidden="true" /><div className="skeleton-row" aria-hidden="true" />
           </div>
         )}
-        {loaded && view === "home" && (
-          <div className="start-page reveal-item">
-            <section className="start-intro" aria-labelledby="start-heading">
-              <span className="start-eyebrow"><Link2 size={16} /> Your business. Connected.</span>
-              <h1 id="start-heading" className="start-title">Connect your business<br />with personal AI.</h1>
-              <p className="start-description">Publish your business agent. Help people discover what you offer, ask questions, and choose their next step through personal AI.</p>
-              <button className="primary-button" onClick={() => nav("skills")}><Sparkles size={20} /> Open Agent Hub</button>
-              <p className="start-note">Business agents and personal skills. No website required.</p>
-            </section>
-            <section className="start-shortcuts" aria-label="Your workspace">
-              <button className="start-shortcut" aria-label="Ask your assistant" onClick={() => nav("discover")}><MessageCircle size={24} /><span><strong>Ask your assistant</strong><small>Find an agent or skill that can help</small></span><ArrowRight size={20} /></button>
-              <button className="start-shortcut" aria-label="Manage listings" onClick={() => nav("host")}><Store size={24} /><span><strong>Your accommodation listings</strong><small>{all.length} published {all.length === 1 ? "offer" : "offers"}</small></span><ArrowRight size={20} /></button>
-              <button className="start-shortcut" aria-label="View bookings" onClick={() => nav("trips")}><CalendarDays size={24} /><span><strong>Your test bookings</strong><small>{active.length} confirmed {active.length === 1 ? "booking" : "bookings"}</small></span><ArrowRight size={20} /></button>
-            </section>
-            <p className="start-context">Sample workspace · No real reservations or payments</p>
-          </div>
-        )}
         {loaded && view === "skills" && (
           <SkillsLibrary onNotify={notify} openAgentId={openAgentId} onAgentOpened={() => setOpenAgentId(undefined)} onReservationChange={() => { refresh().catch(error => setError(error.message)); }} businessRevision={businesses.map(business => `${business.id}:${business.version}`).join("|")} onManageBusiness={businessId => {
             const business = businesses.find(item => item.id === businessId);
@@ -585,19 +574,53 @@ export default function AgentBridge() {
             else setError("This business is no longer available. Refresh your workspace and try again.");
           }} />
         )}
-        {loaded && view === "discover" && (
-          <div className="discover-page reveal-item">
-            <div className="page-heading">
-              <div>
-                <span className="eyebrow">
-                  Personal AI
-                </span>
-                <h1>Your personal assistant</h1>
-                <p>Find business agents and personal skills, ask questions, and review the next step.</p>
-              </div>
-              <button className="outline-button" onClick={() => nav("skills")}><Sparkles size={15} /> Browse Agent Hub</button>
-            </div>
-            <p className="category-chip"><Building2 size={15} /> Accommodation · Test booking workflow</p>
+        {loaded && conversationView && (
+          <section className={`conversation-page${conversationStarted ? " has-messages" : ""}`} aria-label="Your personal assistant">
+            {conversationStarted ? <h1 className="sr-only">Your personal assistant</h1> : <h1 className="conversation-title">Agent<span>Bridge</span></h1>}
+            <div className="assistant-panel">
+              {conversationStarted && <div className="chat-messages" aria-label="Conversation" aria-busy={busy === "assistant"}>
+                  {messages.map((m, i) => (
+                    <div key={i} className={`chat-message ${m.role}`}>
+                      <span>
+                        {m.role === "assistant" ? (
+                          <Sparkles size={14} />
+                        ) : (
+                          <span className="you-dot">Y</span>
+                        )}
+                      </span>
+                      <p>{m.role === "assistant" ? <AssistantText text={m.content} /> : m.content}</p>
+                    </div>
+                  ))}
+                  {busy === "assistant" && (
+                    <div className="thinking">
+                      <BusyIndicator /> Checking
+                      saved information…
+                    </div>
+                  )}
+                  {agentMatches.length > 0 && <section className="assistant-agent-results" aria-label="Agents found">
+                    <h3>Found in Agent Hub</h3>
+                    {agentMatches.map(agent => <button key={agent.id} className="start-shortcut" aria-label={`Chat with ${agent.name}`} onClick={() => { setOpenAgentId(agent.id); nav("skills"); }}>
+                      <Sparkles size={20} /><span><strong>{agent.name}</strong><small>{agent.ownerName} · {agent.summary}</small></span><ArrowUpRight size={18} />
+                    </button>)}
+                  </section>}
+                  {trace.length > 0 && (
+                    <details className="trace">
+                      <summary>
+                        <Link2 size={13} /> {trace.length} agent{" "}
+                        {trace.length === 1 ? "action" : "actions"} checked
+                      </summary>
+                      {trace.map((t, i) => (
+                        <p key={i}>
+                          <Check size={11} /> {t.tool.replaceAll("_", " ")}{" "}
+                          <small>{t.detail}</small>
+                        </p>
+                      ))}
+                    </details>
+                  )}
+                {showRoomResults && (
+              <section className="search-results" aria-label="Room results">
+                <details className="room-search-details">
+                  <summary><SlidersHorizontal size={16} /> Room search details</summary>
             <div className="booking-search">
               <label>
                 <span>
@@ -647,130 +670,7 @@ export default function AgentBridge() {
                 <Search size={18} /> Search
               </button>
             </div>
-            <div className="discover-layout">
-              <section className="assistant-panel">
-                <header>
-                  <div className="assistant-avatar">
-                    <Sparkles size={19} />
-                  </div>
-                  <div>
-                    <strong>Your personal assistant</strong>
-                    <span>
-                      <span className={mode === "live" ? "live-dot" : "offline-dot"} />
-                      {mode === "live"
-                        ? "Nemotron on Nebius"
-                        : "Offline assistant · No model connected"}
-                    </span>
-                  </div>
-                  <span
-                    className="memory-dot"
-                    title="Preferences persist in this workspace"
-                  >
-                    <Bookmark size={16} />
-                  </span>
-                </header>
-                <div className="chat-messages">
-                  <div className="chat-welcome">
-                    <span className="soft-icon">
-                      <Sparkles size={22} />
-                    </span>
-                    <h3>What are you looking for?</h3>
-                    <p>
-                      I can find business agents and personal skills, read their saved
-                      information, and help with your questions. Connected accommodation
-                      agents can also prepare test bookings for your approval.
-                    </p>
-                  </div>
-                  {messages.length === 0 && (
-                    <div className="suggestion-list">
-                      {[
-                        "Find a business agent for bike repairs",
-                        "Find a personal skill for planning my day",
-                        `Find a room for ${checkIn} to ${checkOut} under $160 per night`,
-                      ].map((s) => (
-                        <button key={s} onClick={() => send(s)}>
-                          {s}
-                          <ArrowUpRight size={14} />
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                  {messages.map((m, i) => (
-                    <div key={i} className={`chat-message ${m.role}`}>
-                      <span>
-                        {m.role === "assistant" ? (
-                          <Sparkles size={14} />
-                        ) : (
-                          <span className="you-dot">Y</span>
-                        )}
-                      </span>
-                      <p>{m.role === "assistant" ? <AssistantText text={m.content} /> : m.content}</p>
-                    </div>
-                  ))}
-                  {busy === "assistant" && (
-                    <div className="thinking">
-                      <BusyIndicator /> Checking
-                      saved information…
-                    </div>
-                  )}
-                  {agentMatches.length > 0 && <section className="assistant-agent-results" aria-label="Agents found">
-                    <h3>Found in Agent Hub</h3>
-                    {agentMatches.map(agent => <button key={agent.id} className="start-shortcut" aria-label={`Chat with ${agent.name}`} onClick={() => { setOpenAgentId(agent.id); nav("skills"); }}>
-                      <Sparkles size={20} /><span><strong>{agent.name}</strong><small>{agent.ownerName} · {agent.summary}</small></span><ArrowUpRight size={18} />
-                    </button>)}
-                  </section>}
-                  {trace.length > 0 && (
-                    <details className="trace">
-                      <summary>
-                        <Link2 size={13} /> {trace.length} agent{" "}
-                        {trace.length === 1 ? "action" : "actions"} checked
-                      </summary>
-                      {trace.map((t, i) => (
-                        <p key={i}>
-                          <Check size={11} /> {t.tool.replaceAll("_", " ")}{" "}
-                          <small>{t.detail}</small>
-                        </p>
-                      ))}
-                    </details>
-                  )}
-                  <div ref={chatBottom} />
-                </div>
-                <form
-                  className="chat-composer"
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    send();
-                  }}
-                >
-                  <textarea
-                    aria-label="Message your assistant"
-                    placeholder="Find a business, ask a question, or tell me what you need…"
-                    rows={2}
-                    value={message}
-                    disabled={busy === "assistant"}
-                    maxLength={2000}
-                    onChange={(e) => setMessage(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" && !e.shiftKey) {
-                        e.preventDefault();
-                        send();
-                      }
-                    }}
-                  />
-                  <div>
-                    <span>
-                      <ShieldCheck size={12} /> Your approval. Always.
-                    </span>
-                    <button
-                      aria-label="Send message"
-                      disabled={!!busy || !message.trim()}
-                    >
-                      <ArrowUp size={18} />
-                    </button>
-                  </div>
-                </form>
-              </section>
-              <section className="search-results">
+                </details>
                 <div className="results-toolbar">
                   <div>
                     <h2>{display.length} matching {display.length === 1 ? "offer" : "offers"}</h2>
@@ -865,8 +765,43 @@ export default function AgentBridge() {
                   availability, and the complete total before booking.
                 </p>
               </section>
+                )}
+                <div ref={chatBottom} />
+              </div>}
+                <form
+                  className="chat-composer conversation-composer"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    send();
+                  }}
+                >
+                  <textarea
+                    aria-label="Message your assistant"
+                    placeholder="What can I help you find?"
+                    rows={2}
+                    value={message}
+                    disabled={busy === "assistant"}
+                    maxLength={2000}
+                    onChange={(e) => setMessage(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+                        e.preventDefault();
+                        send();
+                      }
+                    }}
+                  />
+                  <div>
+                    {conversationStarted && <span><ShieldCheck size={12} /> You choose what happens next.</span>}
+                    <button
+                      aria-label="Send message"
+                      disabled={!!busy || !message.trim()}
+                    >
+                      <ArrowUp size={18} />
+                    </button>
+                  </div>
+                </form>
             </div>
-          </div>
+          </section>
         )}
         {loaded && view === "host" && (
           <div className="workspace-page reveal-item">
@@ -1273,14 +1208,13 @@ export default function AgentBridge() {
           </div>
         )}
       </main>
-      <footer className="app-footer" inert={!!modal || menuOpen}><span>AgentBridge</span><a href="/privacy">Privacy</a><a href="/terms">Terms</a></footer>
+      {!conversationView && <footer className="app-footer" inert={!!modal || menuOpen}><span>AgentBridge</span><a href="/privacy">Privacy</a><a href="/terms">Terms</a></footer>}
       <div id="workspace-menu" className={`workspace-menu ${menuOpen ? "menu-open" : ""}`} role={menuOpen ? "dialog" : undefined} aria-modal={menuOpen ? true : undefined} aria-label="Workspace menu" aria-hidden={!menuOpen} inert={!menuOpen} onKeyDown={(event) => { if (event.key === "Escape") setMenuOpen(false); }}>
         <div className="menu-surface">
           <div className="menu-heading"><span className="app-brand"><Link2 size={24} /> AgentBridge</span><button className="menu-toggle" data-open={menuOpen} aria-label="Close menu" onClick={() => setMenuOpen(false)}><span className="menu-line" /><span className="menu-line" /></button></div>
           <div className="menu-links">
-            <button onClick={() => nav("vision")}><Globe2 size={24} /><span>Network vision</span><ArrowUpRight size={20} /></button>
+            {workspaceViews.map(({ id, label, icon: Icon }) => <button key={id} aria-current={view === id ? "page" : undefined} onClick={() => nav(id)}><Icon size={24} /><span>{label}</span><ArrowRight size={20} /></button>)}
             <button aria-label="Your personal space Preferences & memory" disabled={!loaded} onClick={() => { setMenuOpen(false); setPrefDraft(prefs); setModal("preferences"); }}><Settings2 size={24} /><span>Preferences</span><ArrowUpRight size={20} /></button>
-            <button onClick={() => nav("home")}><LayoutDashboard size={24} /><span>Back to home</span><ArrowRight size={20} /></button>
           </div>
           <div className="menu-footer"><p>Sample workspace. No real reservations or payments.</p><p>{mode === "live" ? "AI model connected." : "The assistant works offline. A live AI model is not connected."}</p><a href="/privacy">Privacy</a><a href="/terms">Terms</a></div>
         </div>

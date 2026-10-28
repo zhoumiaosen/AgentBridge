@@ -21,21 +21,12 @@
 .menu-toggle[data-open="true"] .menu-line:last-child { transform: rotate(-45deg); }
 .workspace-main { width: 100%; max-width: 1200px; margin: 0 auto; padding: 40px 24px 32px; min-width: 0; }
 .workspace-main:focus { outline: none; }
-.start-page { max-width: 680px; margin: 0 auto; }
-.start-intro { padding: 40px 0 32px; text-align: center; }
-.start-eyebrow { display: block; margin-bottom: 16px; color: var(--muted); font-size: 12px; line-height: 16px; font-weight: 500; }
-.start-title { max-width: 680px; margin: 0 auto 16px; font-size: 36px; line-height: 40px; font-weight: 600; letter-spacing: -0.04em; color: transparent; background: linear-gradient(to right, #000, #666); background-clip: text; -webkit-background-clip: text; }
-.start-description { max-width: 480px; margin: 0 auto 24px; color: var(--muted); font-size: 16px; line-height: 24px; }
-.start-intro .primary-button { min-width: 160px; }
-.start-note { margin: 12px 0 0; color: var(--muted); font-size: 12px; line-height: 16px; }
-.start-shortcuts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 24px 0 0; }
 .start-shortcut { display: flex; align-items: center; gap: 12px; width: 100%; padding: 16px; border: 1px solid var(--line); border-radius: 16px; background: white; text-align: left; }
 .start-shortcut > svg:first-child { width: 24px; height: 24px; color: var(--muted); }
 .start-shortcut > span { flex: 1; min-width: 0; }
 .start-shortcut strong { display: block; font-size: 14px; line-height: 20px; }
 .start-shortcut small { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; line-height: 16px; }
 .start-shortcut > svg:last-child { color: var(--muted); }
-.start-context { color: var(--muted); margin-top: 24px; text-align: center; font-size: 12px; line-height: 16px; }
 .app-footer { display: flex; align-items: center; justify-content: center; gap: 16px; flex-wrap: wrap; max-width: 1200px; margin: 0 auto; padding: 16px 24px 24px; color: var(--muted); font-size: 12px; line-height: 16px; }
 .app-footer a { display: inline-flex; align-items: center; min-height: 48px; }
 
@@ -98,12 +89,7 @@
   .nav-count { display: none; }
   .workspace-main { padding: 24px 16px 16px; }
   .app-footer { padding: 8px 16px calc(96px + 16px + env(safe-area-inset-bottom)); gap: 16px; }
-  .start-intro { padding: 24px 0 16px; }
-  .start-title { font-size: 30px; line-height: 36px; }
-  .start-description { max-width: 100%; }
-  .start-shortcuts { grid-template-columns: 1fr; gap: 12px; margin-top: 16px; }
   .start-shortcut { min-height: 64px; padding: 12px 16px; }
-  .start-context { margin-top: 16px; }
   .workspace-menu { padding: calc(16px + env(safe-area-inset-top)) 16px calc(32px + env(safe-area-inset-bottom)); }
   .menu-links { margin: 32px 0; }
   .menu-links button, .menu-links a { font-size: 20px; line-height: 28px; }
@@ -140,6 +126,47 @@
 }
 .skill-reload-note { color: var(--muted); font-size: 12px; line-height: 16px; margin: 4px 0 0; }
 
+
+/* One conversation is the entrance; domain-specific results arrive when requested. */
+.conversation-app { display: flex; flex-direction: column; height: 100dvh; min-height: 360px; padding: 16px 0 0; background: white; }
+.conversation-app .app-header { width: 100%; max-width: none; margin: 0; padding: 0 24px; border: 0; border-radius: 0; background: transparent; backdrop-filter: none; }
+.conversation-app .app-header .connection-status { display: none; }
+.conversation-empty .app-header { justify-content: flex-end; }
+.conversation-empty .app-header > .app-brand { display: none; }
+.conversation-app .workspace-main { display: flex; flex: 1; flex-direction: column; min-height: 0; max-width: 800px; padding: 16px 24px 24px; }
+.conversation-page { display: flex; flex: 1; min-height: 0; flex-direction: column; justify-content: center; padding-bottom: min(18vh, 150px); }
+.conversation-title { margin: 0 0 36px; font-size: clamp(36px, 7vw, 52px); line-height: 1.2; letter-spacing: -0.055em; text-align: center; font-weight: 600; }
+.conversation-title > span { color: #72736d; }
+.conversation-page .assistant-panel { position: static; overflow: visible; border: 0; border-radius: 0; background: transparent; }
+.conversation-page.has-messages { padding-bottom: 0; }
+.conversation-page.has-messages .assistant-panel { display: flex; flex: 1; flex-direction: column; min-height: 0; }
+.conversation-page .chat-messages { flex: 1; min-height: 0; height: auto; padding: 8px 4px 24px; }
+.conversation-page .chat-message { margin: 20px 0; font-size: 15px; line-height: 24px; }
+.conversation-page .chat-message.assistant p { background: transparent; padding-left: 4px; }
+.conversation-page .chat-message.user p { max-width: 88%; padding: 12px 18px; border-radius: 20px; background: #f3f3f0; }
+.conversation-page .chat-message.user > span { display: none; }
+.conversation-page .conversation-composer { flex-shrink: 0; padding: 18px 18px 12px; border: 1px solid var(--line); border-radius: 26px; background: white; box-shadow: 0 4px 20px #18181805; }
+.conversation-composer:focus-within { border-color: #979990; box-shadow: 0 4px 24px #1818180a; }
+.conversation-page .conversation-composer textarea { min-height: 48px; max-height: 160px; resize: vertical; }
+.conversation-composer > div { min-height: 44px; }
+.conversation-composer > div > button { width: 44px; height: 44px; margin-left: auto; border-radius: 50%; }
+.conversation-page .search-results { margin-top: 24px; }
+.room-search-details { margin-bottom: 20px; }
+.room-search-details > summary { display: flex; align-items: center; gap: 8px; min-height: 44px; width: fit-content; color: var(--muted); cursor: pointer; font-size: 13px; }
+.room-search-details .booking-search { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.room-search-details .booking-search > label:first-child { grid-column: 1 / -1; }
+.conversation-page .results-toolbar p { max-width: 440px; }
+@media (max-width: 760px) {
+  .conversation-app { padding-top: env(safe-area-inset-top); }
+  .conversation-app .app-header { padding: 8px 12px; }
+  .conversation-app .workspace-main { padding: 4px 16px calc(16px + env(safe-area-inset-bottom)); }
+  .conversation-page { padding-bottom: 16vh; }
+  .conversation-title { margin-bottom: 28px; }
+  .conversation-page .conversation-composer { padding: 16px 14px 10px; border-radius: 24px; }
+  .conversation-composer > div > span { font-size: 11px; }
+  .conversation-page .chat-messages { padding-right: 0; padding-left: 0; }
+  .conversation-page .results-grid { grid-template-columns: 1fr; }
+}
 
 /* The library gives agents and reusable instructions a shared, readable home. */
 .library-header-actions { display: flex; flex-wrap: wrap; gap: 8px; flex-shrink: 0; }

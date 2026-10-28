@@ -5,7 +5,7 @@ test.use({ ...(process.env.AGENTBRIDGE_TEST_URL ? { baseURL: process.env.AGENTBR
 test("personal assistant preserves a failed draft and retries without duplicate conversation entries", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/#discover");
-  await expect(page.getByRole("heading", { name: "Your personal assistant", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "AgentBridge", exact: true })).toBeVisible();
   const question = "Find a business agent that can answer bicycle repair questions.";
   const reply = "I found a cycle shop agent. Open its conversation to ask about your repair.";
   let attempts = 0;
@@ -46,7 +46,7 @@ test("personal assistant preserves a failed draft and retries without duplicate 
 
 test("a successful HTTP response with no assistant answer preserves the draft", async ({ page }) => {
   await page.goto("/#discover");
-  await expect(page.getByRole("heading", { name: "Your personal assistant", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "AgentBridge", exact: true })).toBeVisible();
   await page.route("**/api/assistant", route => route.fulfill({ json: { mode: "live", reply: "" } }));
   const composer = page.getByLabel("Message your assistant", { exact: true });
   await composer.fill("Find a personal planning skill.");

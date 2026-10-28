@@ -7,7 +7,8 @@ test.use({
 
 async function openAgent(page: Page) {
   await page.goto("/");
-  await page.getByRole("button", { name: "Manage listings", exact: true }).click();
+  await page.getByRole("button", { name: "More", exact: true }).click();
+  await page.getByRole("dialog", { name: "Workspace menu", exact: true }).getByRole("button", { name: "Listings", exact: true }).click();
   const business = page.locator(".business-skill").first();
   await business.locator("summary").click();
   const edit = business.getByRole("button", { name: "Edit agent", exact: true });

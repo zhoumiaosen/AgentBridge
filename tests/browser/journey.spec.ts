@@ -3,11 +3,11 @@ test("onboard host, discover, explicitly approve booking, reschedule, cancel, pe
   page,
 }) => {
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "Connect your business with personal AI.", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "AgentBridge", exact: true })).toBeVisible();
   await page.screenshot({ path: "work/home-desktop.png", fullPage: true, animations: "disabled" });
-  await page.getByRole("button", { name: "Assistant", exact: true }).first().click();
-  await page.getByLabel("Required amenity").selectOption("Step-free access");
-  await page.getByRole("button", { name: "Search", exact: true }).click();
+  const date = (offset: number) => { const d = new Date(); d.setDate(d.getDate() + offset); return d.toISOString().slice(0, 10); };
+  await page.getByLabel("Message your assistant", { exact: true }).fill(`Find a room for ${date(12)} to ${date(14)} for 1 guest with step-free access.`);
+  await page.getByRole("button", { name: "Send message", exact: true }).click();
   await expect(page.getByText("No matching stays yet.")).toBeVisible();
   await page
     .getByRole("button", { name: "Connect a host", exact: true })
@@ -19,6 +19,7 @@ test("onboard host, discover, explicitly approve booking, reschedule, cancel, pe
     .getByRole("button", { name: "Publish to AgentBridge", exact: true })
     .click();
   await expect(page.getByRole("dialog")).not.toBeVisible();
+  await page.getByText("Room search details", { exact: true }).click();
   await page.getByRole("button", { name: "Search", exact: true }).click();
   await expect(page.locator(".results-grid .stay-card")).toHaveCount(1);
   await expect(page.locator(".results-grid")).toContainText("The Garden Room");
@@ -84,7 +85,6 @@ test("assistant discovers actual listings and syncs requested dates", async ({
   page,
 }) => {
   await page.goto("/");
-  await page.getByRole("button", { name: "Assistant", exact: true }).first().click();
   const d = new Date();
   d.setDate(d.getDate() + 30);
   const e = new Date();
@@ -105,22 +105,21 @@ test("assistant discovers actual listings and syncs requested dates", async ({
 test("phone navigation, room form, and booking approval stay usable without overflow", async ({ page }) => {
   await page.setViewportSize({ width: 320, height: 844 });
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: "Connect your business with personal AI.", exact: true })).toBeVisible();
-  const navigation = page.getByRole("navigation", { name: "Main navigation" });
-  await expect(navigation.getByRole("button")).toHaveText(["Home", "Listings", "Assistant", "Bookings", "Agent Hub"]);
+  await expect(page.getByRole("heading", { name: "AgentBridge", exact: true })).toBeVisible();
+  await expect(page.getByRole("navigation", { name: "Main navigation" })).toHaveCount(0);
   for (const width of [320, 390]) {
     await page.setViewportSize({ width, height: 844 });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-    const navBounds = await navigation.boundingBox();
-    expect(navBounds).not.toBeNull();
-    expect(navBounds!.y).toBeGreaterThan(700);
-    expect(navBounds!.y + navBounds!.height).toBeLessThanOrEqual(844);
+    await page.getByRole("button", { name: "More", exact: true }).click();
+    const menu = page.getByRole("dialog", { name: "Workspace menu", exact: true });
+    await menu.getByRole("button", { name: "Listings", exact: true }).click();
+    const navigation = page.getByRole("navigation", { name: "Main navigation" });
+    await expect(navigation.getByRole("button")).toHaveText(["Home", "Listings", "Assistant", "Bookings", "Agent Hub"]);
     for (const button of await navigation.getByRole("button").all()) {
       const bounds = await button.boundingBox();
       expect(bounds!.width).toBeGreaterThanOrEqual(44);
       expect(bounds!.height).toBeGreaterThanOrEqual(44);
     }
-    await page.getByRole("button", { name: "Listings", exact: true }).click();
     await page.getByRole("button", { name: "Add listing", exact: true }).click();
     const form = page.getByRole("dialog");
     await expect(form.getByLabel("Listing name", { exact: true })).toBeVisible();
@@ -133,10 +132,12 @@ test("phone navigation, room form, and booking approval stay usable without over
     await expect(page.getByRole("button", { name: "Add listing", exact: true })).toBeFocused();
   }
   await page.getByRole("button", { name: "Home", exact: true }).click();
-  await expect(page.getByRole("button", { name: "Open Agent Hub", exact: true })).toBeVisible();
+  await expect(page.getByLabel("Message your assistant", { exact: true })).toBeVisible();
   await page.screenshot({ path: "work/home-mobile.png", fullPage: true, animations: "disabled" });
-  await page.getByRole("button", { name: "Assistant", exact: true }).click();
-  await expect(page.locator(".assistant-panel")).toBeVisible();
+  const date = (offset: number) => { const d = new Date(); d.setDate(d.getDate() + offset); return d.toISOString().slice(0, 10); };
+  await page.getByLabel("Message your assistant", { exact: true }).fill(`Find a hotel room for ${date(12)} to ${date(14)} for 1 guest under $250 per night.`);
+  await page.getByRole("button", { name: "Send message", exact: true }).click();
+  await expect(page.getByRole("region", { name: "Room results", exact: true })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.screenshot({ path: "work/discover-mobile.png", fullPage: true, animations: "disabled" });
   await page.getByRole("button", { name: "View stay", exact: true }).first().click();
@@ -179,7 +180,8 @@ test('HTTP transactions require same-origin explicit approval and reject stale c
 });
 
 test('assistant-prepared quote opens approval with its exact dates; dialog traps keyboard focus',async({page})=>{
- await page.goto('/');await page.getByRole('button',{name:'Assistant',exact:true}).first().click();
+ await page.goto('/');
+ await expect(page.getByLabel('Message your assistant')).toBeVisible();
  const data=await (await page.request.get('/api/actions/state')).json();
  const d=new Date();d.setDate(d.getDate()+35);const e=new Date();e.setDate(e.getDate()+37);
  const start=d.toISOString().slice(0,10),end=e.toISOString().slice(0,10);
